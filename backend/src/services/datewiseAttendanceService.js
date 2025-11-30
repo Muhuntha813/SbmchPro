@@ -107,41 +107,58 @@ function parseDatewiseAttendanceRows(html) {
     return []
   }
   
+  logger.info('[datewiseAttendance] Parsing HTML for attendance table', {
+    htmlLength: html.length,
+    hasAttendanceResult: html.includes('attendance_result'),
+    hasTable: html.includes('<table'),
+    hasTbody: html.includes('<tbody'),
+    htmlPreview: html.substring(0, 500)
+  })
+  
   const $ = cheerio.load(html)
   const rows = []
   
   // Try multiple selectors to find the attendance table
   let table = null
   
-  // First try: .attendance_result table
+  // First try: .attendance_result table (most specific)
   const resultBox = $('.attendance_result')
   if (resultBox.length) {
     table = resultBox.find('table').first()
-    logger.debug('[datewiseAttendance] Found table in .attendance_result')
+    logger.info('[datewiseAttendance] Found table in .attendance_result', { 
+      resultBoxLength: resultBox.length,
+      tableLength: table.length 
+    })
   }
   
   // Second try: Any table with tbody
   if (!table || table.length === 0) {
-    table = $('table tbody').parent().first()
-    if (table.length) {
-      logger.debug('[datewiseAttendance] Found table with tbody')
+    const tablesWithTbody = $('table tbody').parent()
+    if (tablesWithTbody.length) {
+      table = tablesWithTbody.first()
+      logger.info('[datewiseAttendance] Found table with tbody', { count: tablesWithTbody.length })
     }
   }
   
-  // Third try: Any table
+  // Third try: Any table on the page
   if (!table || table.length === 0) {
-    table = $('table').first()
-    if (table.length) {
-      logger.debug('[datewiseAttendance] Found first table on page')
+    const allTables = $('table')
+    if (allTables.length) {
+      table = allTables.first()
+      logger.info('[datewiseAttendance] Found first table on page', { totalTables: allTables.length })
     }
   }
   
   if (!table || table.length === 0) {
-    logger.warn('[datewiseAttendance] No attendance table found in result page', {
+    logger.error('[datewiseAttendance] No attendance table found in result page', {
       htmlLength: html.length,
       hasAttendanceResult: html.includes('attendance_result'),
       hasTable: html.includes('<table'),
-      htmlPreview: html.substring(0, 1000)
+      hasTbody: html.includes('<tbody'),
+      htmlPreview: html.substring(0, 2000),
+      // Check for common error messages
+      hasNoRecords: html.includes('No attendance') || html.includes('no records') || html.includes('No data'),
+      hasError: html.includes('error') || html.includes('Error')
     })
     return []
   }
@@ -150,9 +167,10 @@ function parseDatewiseAttendanceRows(html) {
   const tbody = table.find('tbody')
   const trs = tbody.length > 0 ? tbody.find('tr') : table.find('tr')
   
-  logger.debug('[datewiseAttendance] Found table rows', { 
+  logger.info('[datewiseAttendance] Found table rows', { 
     rowCount: trs.length,
-    hasTbody: tbody.length > 0
+    hasTbody: tbody.length > 0,
+    tableHtml: table.html()?.substring(0, 500)
   })
   
   trs.each((_, tr) => {
@@ -161,6 +179,7 @@ function parseDatewiseAttendanceRows(html) {
     
     // Skip header rows or rows with less than 3 cells
     if (tds.length < 3) {
+      logger.debug('[datewiseAttendance] Skipping row (too few cells)', { cellCount: tds.length })
       return
     }
     
@@ -179,8 +198,11 @@ function parseDatewiseAttendanceRows(html) {
     
     // Skip empty rows
     if (!subject && !time_from && !time_to && !attendance) {
+      logger.debug('[datewiseAttendance] Skipping empty row')
       return
     }
+    
+    logger.debug('[datewiseAttendance] Parsed row', { subject, time_from, time_to, attendance })
     
     rows.push({
       subject,
@@ -334,12 +356,32 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
   
   logger.info('[datewiseAttendance] Payload prepared', { 
     payloadString: payload.toString(),
-    endpointCount: possibleEndpoints.length 
+    endpointCount: possibleEndpoints.length,
+    allEndpoints: possibleEndpoints
   })
+  
+  // CRITICAL: Make sure we actually try to submit the date
+  // Don't just parse the initial page - we MUST get a response with the date filter applied
+  if (payload.toString() === '') {
+    logger.error('[datewiseAttendance] Payload is empty - cannot submit date!', {
+      dateToFetch,
+      foundInputs: dateFieldNames.map(name => ({
+        name,
+        found: $page(`input[name="${name}"], input#${name}`).length > 0
+      }))
+    })
+    throw new Error('Cannot determine date field names from page. Payload is empty.')
+  }
   
   // Try each possible endpoint
   let lastError = null
   let triedEndpoints = []
+  
+  logger.info('[datewiseAttendance] Starting endpoint attempts', {
+    totalEndpoints: possibleEndpoints.length,
+    dateToFetch,
+    payload: payload.toString()
+  })
   
   for (const endpoint of possibleEndpoints) {
     triedEndpoints.push(endpoint)
@@ -585,29 +627,29 @@ export async function scrapeDatewiseAttendance({ username, password, dateToFetch
     // Fetch date-wise attendance
     logger.info('[datewiseAttendance] Fetching date-wise attendance', { username, dateToFetch })
     const rows = await fetchDatewiseAttendance(client, { dateToFetch })
-    
-    const result = {
-      source: ATT_PAGE,
-      date_used: dateToFetch,
-      rows
-    }
 
-    logger.info('[datewiseAttendance] Scrape completed', {
-      rowCount: rows.length,
-      dateUsed: dateToFetch,
+      const result = { 
+        source: ATT_PAGE, 
+        date_used: dateToFetch, 
+        rows 
+      }
+
+      logger.info('[datewiseAttendance] Scrape completed', {
+        rowCount: rows.length,
+        dateUsed: dateToFetch,
       username
-    })
+      })
 
-    // Cache the result
-    setCache(username, dateToFetch, result)
+      // Cache the result
+      setCache(username, dateToFetch, result)
 
-    return result
-  } catch (err) {
-    logger.error('[datewiseAttendance] Error during scrape', {
-      error: err.message,
-      stack: err.stack,
-      username,
-      dateToFetch,
+      return result
+    } catch (err) {
+      logger.error('[datewiseAttendance] Error during scrape', {
+        error: err.message,
+        stack: err.stack,
+        username,
+        dateToFetch,
       code: err.code
     })
     throw err

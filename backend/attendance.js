@@ -1259,21 +1259,34 @@ export { app };
 
 // Only start server if not in test environment
 if (process.env.NODE_ENV !== 'test') {
-  // Check if Chrome is available for Puppeteer (non-blocking)
+  // Check if Chrome is available for Puppeteer (non-blocking, for logging only)
   import('puppeteer').then(async (puppeteerModule) => {
     try {
       const puppeteer = puppeteerModule.default
+      // Set cache directory if not set
+      if (!process.env.PUPPETEER_CACHE_DIR) {
+        process.env.PUPPETEER_CACHE_DIR = process.env.HOME 
+          ? `${process.env.HOME}/.cache/puppeteer`
+          : '/opt/render/.cache/puppeteer'
+      }
+      
       // Try to get Chrome revision to verify installation
-      const revision = await puppeteer.createBrowserFetcher().revisionInfo()
+      const fetcher = puppeteer.createBrowserFetcher({
+        path: process.env.PUPPETEER_CACHE_DIR
+      })
+      const revision = await fetcher.revisionInfo()
+      
       logger.info('[startup] Puppeteer Chrome check', {
         revision: revision.revision,
         executablePath: revision.executablePath || 'auto-detect',
-        folderPath: revision.folderPath || 'not found'
+        folderPath: revision.folderPath || 'not found',
+        cacheDir: process.env.PUPPETEER_CACHE_DIR
       })
     } catch (err) {
       logger.warn('[startup] Puppeteer Chrome check failed', {
         error: err.message,
-        suggestion: 'Chrome may not be installed. Date-wise attendance will not work.'
+        cacheDir: process.env.PUPPETEER_CACHE_DIR || 'not set',
+        suggestion: 'Chrome may not be installed. Date-wise attendance will not work. Check build logs.'
       })
     }
   }).catch((e) => {

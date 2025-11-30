@@ -532,21 +532,44 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
   }
   
   const resultHtml = await submitResponse.text()
+  
+  // CRITICAL: Check if we got the same page back (form submission didn't work)
+  const isSamePage = resultHtml.length === attendancePageHtml.length || 
+                     (resultHtml.includes('dob') && resultHtml.includes('end_dob') && 
+                      !resultHtml.includes('attendance_result'))
+  
+  if (isSamePage) {
+    logger.error('[datewiseAttendance] Form submission returned the same page - form may require JavaScript', {
+      htmlLength: resultHtml.length,
+      originalLength: attendancePageHtml.length,
+      hasDateInputs: resultHtml.includes('dob') && resultHtml.includes('end_dob'),
+      hasResults: resultHtml.includes('attendance_result')
+    })
+    throw new Error('Form submission did not work - the page may require JavaScript to submit the date filter. All endpoints failed.')
+  }
+  
   logger.info('[datewiseAttendance] Form submission HTML received', {
     htmlLength: resultHtml.length,
     hasAttendanceResult: resultHtml.includes('attendance_result'),
     hasTable: resultHtml.includes('<table'),
+    isDifferentFromOriginal: resultHtml.length !== attendancePageHtml.length,
     htmlPreview: resultHtml.substring(0, 1000)
   })
   
   const rows = parseDatewiseAttendanceRows(resultHtml)
   
   if (rows.length === 0) {
-    logger.warn('[datewiseAttendance] No rows found after form submission', {
+    logger.error('[datewiseAttendance] No rows found after form submission', {
       htmlLength: resultHtml.length,
       hasAttendanceResult: resultHtml.includes('attendance_result'),
       hasTable: resultHtml.includes('<table'),
-      htmlPreview: resultHtml.substring(0, 2000)
+      hasTbody: resultHtml.includes('<tbody'),
+      htmlPreview: resultHtml.substring(0, 3000),
+      // Check if page says "no records" or similar
+      hasNoRecordsMessage: resultHtml.includes('No attendance') || 
+                          resultHtml.includes('no records') || 
+                          resultHtml.includes('No data') ||
+                          resultHtml.includes('not found')
     })
   } else {
     logger.info('[datewiseAttendance] Successfully parsed rows from form submission', {

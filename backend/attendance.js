@@ -1259,6 +1259,27 @@ export { app };
 
 // Only start server if not in test environment
 if (process.env.NODE_ENV !== 'test') {
+  // Check if Chrome is available for Puppeteer (non-blocking)
+  import('puppeteer').then(async (puppeteerModule) => {
+    try {
+      const puppeteer = puppeteerModule.default
+      // Try to get Chrome revision to verify installation
+      const revision = await puppeteer.createBrowserFetcher().revisionInfo()
+      logger.info('[startup] Puppeteer Chrome check', {
+        revision: revision.revision,
+        executablePath: revision.executablePath || 'auto-detect',
+        folderPath: revision.folderPath || 'not found'
+      })
+    } catch (err) {
+      logger.warn('[startup] Puppeteer Chrome check failed', {
+        error: err.message,
+        suggestion: 'Chrome may not be installed. Date-wise attendance will not work.'
+      })
+    }
+  }).catch((e) => {
+    logger.warn('[startup] Could not check Puppeteer Chrome', { error: e.message })
+  })
+  
   // Ensure DB schema on boot (non-blocking)
   ensureSchema().catch((e) => logger.error('ensureSchema boot error', { error: e.message }));
   

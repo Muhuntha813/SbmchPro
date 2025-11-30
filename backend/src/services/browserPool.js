@@ -95,7 +95,6 @@ function findChromeExecutable() {
     // Handle glob patterns by checking parent directory
     if (chromePath.includes('*')) {
       try {
-        const { readdirSync } = await import('fs')
         const parentDir = chromePath.substring(0, chromePath.indexOf('*'))
         const parentPath = parentDir.substring(0, parentDir.lastIndexOf('/'))
         if (existsSync(parentPath)) {

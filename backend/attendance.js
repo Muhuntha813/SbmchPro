@@ -71,19 +71,32 @@ const allowedOrigins = process.env.FRONTEND_URL
       'http://localhost:3001'
     ];
 
+// Log allowed origins for debugging
+logger.info('CORS configuration', {
+  hasFrontendUrl: !!process.env.FRONTEND_URL,
+  allowedOrigins: allowedOrigins.length > 0 ? allowedOrigins : 'none (localhost only)',
+  nodeEnv: process.env.NODE_ENV || 'development'
+});
+
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      logger.debug('[CORS] Allowing request with no origin');
+      return callback(null, true);
+    }
     
     // Allow any localhost port for development
     if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      logger.debug('[CORS] Allowing localhost origin:', origin);
       return callback(null, true);
     }
     
     if (allowedOrigins.indexOf(origin) !== -1) {
+      logger.debug('[CORS] Allowing origin:', origin);
       callback(null, true);
     } else {
+      logger.warn('[CORS] Rejected origin:', origin, 'Allowed origins:', allowedOrigins);
       callback(new Error('Not allowed by CORS'));
     }
   },

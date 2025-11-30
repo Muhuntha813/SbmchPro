@@ -29,10 +29,12 @@
 3. **`NODE_ENV`** (RECOMMENDED)
    - Set to: `production`
 
-4. **`FRONTEND_URL`** (OPTIONAL but recommended)
-   - Your Vercel frontend URL
+4. **`FRONTEND_URL`** (⚠️ REQUIRED for CORS - Backend will reject requests without this!)
+   - Your Vercel frontend URL (the exact URL where your frontend is deployed)
    - Example: `https://your-app.vercel.app`
-   - For multiple origins: `https://app1.vercel.app,https://app2.vercel.app`
+   - For multiple origins (staging + production): `https://app.vercel.app,https://app-staging.vercel.app`
+   - **Important**: Include the protocol (`https://`) and no trailing slash
+   - **Without this, you'll get "Not allowed by CORS" errors!**
 
 ### 3. Service Configuration
 

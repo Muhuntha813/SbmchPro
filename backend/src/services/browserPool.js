@@ -69,12 +69,19 @@ function findChromeExecutable() {
     }
   }
   
-  // Common Puppeteer cache locations
+  // Common Puppeteer cache locations (Puppeteer v24+ installs to specific subdirectories)
+  const cacheDir = process.env.PUPPETEER_CACHE_DIR || 
+                   join(process.env.HOME || '/opt/render', '.cache/puppeteer')
+  
   const possiblePaths = [
-    // Render/Linux default
-    join(process.env.HOME || '/opt/render', '.cache/puppeteer/chrome'),
-    // Alternative Render path
-    '/opt/render/.cache/puppeteer/chrome',
+    // Puppeteer v24+ default installation path (from build logs)
+    join(cacheDir, 'chrome/linux-142.0.7444.175/chrome-linux64/chrome'),
+    // Alternative version paths (check common versions)
+    join(cacheDir, 'chrome/linux-*/chrome-linux64/chrome'),
+    // Legacy paths
+    join(cacheDir, 'chrome/chrome-linux64/chrome'),
+    join(cacheDir, 'chrome/chrome'),
+    join(cacheDir, 'chrome'),
     // System Chrome
     '/usr/bin/google-chrome',
     '/usr/bin/chromium',
@@ -84,76 +91,60 @@ function findChromeExecutable() {
   ]
   
   // Try to find Chrome in common locations
-  for (const basePath of possiblePaths) {
-    // Check for chrome executable in various subdirectories
-    const chromeVariants = [
-      join(basePath, 'chrome-linux64/chrome'),
-      join(basePath, 'chrome/chrome'),
-      join(basePath, 'chrome'),
-      basePath,
-    ]
-    
-    for (const chromePath of chromeVariants) {
-      if (existsSync(chromePath)) {
-        logger.info('[browserPool] Found Chrome at', { path: chromePath })
-        return chromePath
+  for (const chromePath of possiblePaths) {
+    // Handle glob patterns by checking parent directory
+    if (chromePath.includes('*')) {
+      try {
+        const { readdirSync } = await import('fs')
+        const parentDir = chromePath.substring(0, chromePath.indexOf('*'))
+        const parentPath = parentDir.substring(0, parentDir.lastIndexOf('/'))
+        if (existsSync(parentPath)) {
+          const dirs = readdirSync(parentPath)
+          for (const dir of dirs) {
+            const testPath = join(parentPath, dir, 'chrome-linux64/chrome')
+            if (existsSync(testPath)) {
+              logger.info('[browserPool] Found Chrome at', { path: testPath })
+              return testPath
+            }
+          }
+        }
+      } catch (e) {
+        // Continue to next path
       }
+    } else if (existsSync(chromePath)) {
+      logger.info('[browserPool] Found Chrome at', { path: chromePath })
+      return chromePath
     }
   }
   
-  // Try to get from puppeteer's cache directory
+  // Try to find Chrome by scanning the cache directory
   try {
-    const cacheDir = process.env.PUPPETEER_CACHE_DIR || 
-                     join(process.env.HOME || '/opt/render', '.cache/puppeteer')
-    const chromiumDir = join(cacheDir, 'chrome')
-    if (existsSync(chromiumDir)) {
-      // Look for chrome executable inside
-      const chromePath = join(chromiumDir, 'chrome-linux64/chrome')
-      if (existsSync(chromePath)) {
-        logger.info('[browserPool] Found Chrome in cache directory', { path: chromePath })
-        return chromePath
+    const chromeCacheDir = join(cacheDir, 'chrome')
+    if (existsSync(chromeCacheDir)) {
+      // Look for version directories
+      const entries = readdirSync(chromeCacheDir)
+      for (const entry of entries) {
+        const entryPath = join(chromeCacheDir, entry)
+        const stats = statSync(entryPath)
+        if (stats.isDirectory()) {
+          // Check for chrome-linux64 subdirectory
+          const chromeLinuxPath = join(entryPath, 'chrome-linux64/chrome')
+          if (existsSync(chromeLinuxPath)) {
+            logger.info('[browserPool] Found Chrome by scanning cache', { path: chromeLinuxPath })
+            return chromeLinuxPath
+          }
+        }
       }
     }
   } catch (e) {
-    logger.debug('[browserPool] Error checking cache directory', { error: e.message })
+    logger.debug('[browserPool] Error scanning cache directory', { error: e.message })
   }
   
   return null
 }
 
-/**
- * Install Chrome at runtime if not found
- */
-async function installChromeIfNeeded() {
-  try {
-    const cacheDir = process.env.PUPPETEER_CACHE_DIR || 
-                     join(process.env.HOME || '/opt/render', '.cache/puppeteer')
-    
-    logger.info('[browserPool] Attempting to install Chrome at runtime', { cacheDir })
-    
-    const fetcher = puppeteer.createBrowserFetcher({
-      path: cacheDir
-    })
-    
-    const revision = await fetcher.download()
-    logger.info('[browserPool] Chrome installed successfully', {
-      revision: revision.revision,
-      executablePath: revision.executablePath,
-      folderPath: revision.folderPath
-    })
-    
-    return revision.executablePath
-  } catch (err) {
-    logger.error('[browserPool] Failed to install Chrome at runtime', {
-      error: err.message,
-      cacheDir: process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer'
-    })
-    throw err
-  }
-}
-
-// Track if we're currently installing Chrome to avoid multiple simultaneous installations
-let chromeInstallPromise = null
+// Note: Chrome should be installed during build via postinstall script
+// Runtime installation is not supported in Puppeteer v24+ without createBrowserFetcher
 
 /**
  * Create a new browser instance
@@ -162,30 +153,14 @@ async function createBrowser() {
   try {
     logger.info('[browserPool] Creating new browser instance')
     
-    // Find Chrome executable
-    let chromePath = findChromeExecutable()
+    // Find Chrome executable (should be installed during build)
+    const chromePath = findChromeExecutable()
     
-    // If Chrome not found, try to install it at runtime
     if (!chromePath) {
-      logger.warn('[browserPool] Chrome not found, attempting runtime installation')
-      
-      // Only install once at a time
-      if (!chromeInstallPromise) {
-        chromeInstallPromise = installChromeIfNeeded()
-      }
-      
-      try {
-        chromePath = await chromeInstallPromise
-        chromeInstallPromise = null // Reset after successful installation
-        logger.info('[browserPool] Chrome installed, using path', { path: chromePath })
-      } catch (installErr) {
-        chromeInstallPromise = null // Reset on failure
-        logger.error('[browserPool] Runtime Chrome installation failed', {
-          error: installErr.message,
-          suggestion: 'Chrome must be installed during build. Check build logs.'
-        })
-        // Continue anyway - Puppeteer might still work
-      }
+      logger.warn('[browserPool] Chrome executable not found', {
+        suggestion: 'Chrome should be installed during build. Check build logs for installation errors.',
+        cacheDir: process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer'
+      })
     }
     
     // Configure executable path for Render (if Chrome is installed via postinstall)

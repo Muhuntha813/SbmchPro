@@ -1260,9 +1260,11 @@ export { app };
 // Only start server if not in test environment
 if (process.env.NODE_ENV !== 'test') {
   // Check if Chrome is available for Puppeteer (non-blocking, for logging only)
-  import('puppeteer').then(async (puppeteerModule) => {
+  import('fs').then(async (fsModule) => {
     try {
-      const puppeteer = puppeteerModule.default
+      const { existsSync } = fsModule
+      const { join } = await import('path')
+      
       // Set cache directory if not set
       if (!process.env.PUPPETEER_CACHE_DIR) {
         process.env.PUPPETEER_CACHE_DIR = process.env.HOME 
@@ -1270,23 +1272,62 @@ if (process.env.NODE_ENV !== 'test') {
           : '/opt/render/.cache/puppeteer'
       }
       
-      // Try to get Chrome revision to verify installation
-      const fetcher = puppeteer.createBrowserFetcher({
-        path: process.env.PUPPETEER_CACHE_DIR
-      })
-      const revision = await fetcher.revisionInfo()
+      const cacheDir = process.env.PUPPETEER_CACHE_DIR
+      // Check for Chrome in the expected location (Puppeteer v24+)
+      const chromePath = join(cacheDir, 'chrome/linux-142.0.7444.175/chrome-linux64/chrome')
+      const chromeExists = existsSync(chromePath)
       
-      logger.info('[startup] Puppeteer Chrome check', {
-        revision: revision.revision,
-        executablePath: revision.executablePath || 'auto-detect',
-        folderPath: revision.folderPath || 'not found',
-        cacheDir: process.env.PUPPETEER_CACHE_DIR
-      })
+      if (chromeExists) {
+        logger.info('[startup] Puppeteer Chrome found', {
+          executablePath: chromePath,
+          cacheDir: cacheDir
+        })
+      } else {
+        // Try to find any Chrome version
+        try {
+          const { readdirSync, statSync } = fsModule
+          const chromeCacheDir = join(cacheDir, 'chrome')
+          if (existsSync(chromeCacheDir)) {
+            const entries = readdirSync(chromeCacheDir)
+            let found = false
+            for (const entry of entries) {
+              const entryPath = join(chromeCacheDir, entry)
+              const stats = statSync(entryPath)
+              if (stats.isDirectory()) {
+                const testPath = join(entryPath, 'chrome-linux64/chrome')
+                if (existsSync(testPath)) {
+                  logger.info('[startup] Puppeteer Chrome found', {
+                    executablePath: testPath,
+                    cacheDir: cacheDir
+                  })
+                  found = true
+                  break
+                }
+              }
+            }
+            if (!found) {
+              logger.warn('[startup] Puppeteer Chrome not found', {
+                cacheDir: cacheDir,
+                suggestion: 'Chrome should be installed during build. Check build logs.'
+              })
+            }
+          } else {
+            logger.warn('[startup] Puppeteer Chrome cache directory not found', {
+              cacheDir: cacheDir,
+              suggestion: 'Chrome should be installed during build. Check build logs.'
+            })
+          }
+        } catch (scanErr) {
+          logger.warn('[startup] Could not scan for Chrome', { 
+            error: scanErr.message,
+            cacheDir: cacheDir
+          })
+        }
+      }
     } catch (err) {
       logger.warn('[startup] Puppeteer Chrome check failed', {
         error: err.message,
-        cacheDir: process.env.PUPPETEER_CACHE_DIR || 'not set',
-        suggestion: 'Chrome may not be installed. Date-wise attendance will not work. Check build logs.'
+        cacheDir: process.env.PUPPETEER_CACHE_DIR || 'not set'
       })
     }
   }).catch((e) => {

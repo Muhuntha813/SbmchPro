@@ -275,11 +275,12 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
   
   // Try common date-wise attendance API endpoints (similar pattern to regular attendance)
   // Regular attendance uses: /user/attendence/subjectgetdaysubattendence
-  // So date-wise might be: /user/attendence/getdatewiseattendence or similar
+  // So date-wise might follow similar pattern: /user/attendence/getdatewiseattendence
   const possibleEndpoints = [
-    // Found in page scripts/data
+    // Found in page scripts/data (prioritize these)
     ...foundEndpoints.map(e => `${LMS_BASE}${e}`),
-    // Common patterns based on regular attendance endpoint
+    // Common patterns based on regular attendance endpoint pattern
+    // Pattern: subjectgetdaysubattendence -> getdatewiseattendence
     `${LMS_BASE}/user/attendence/getdatewiseattendence`,
     `${LMS_BASE}/user/attendence/getdatewiseattendance`,
     `${LMS_BASE}/user/attendence/datewiseattendence`,
@@ -288,10 +289,18 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
     `${LMS_BASE}/user/attendence/getattendancebydate`,
     `${LMS_BASE}/user/attendence/getdateattendence`,
     `${LMS_BASE}/user/attendence/getdateattendance`,
+    // Try variations with "by" like regular attendance
+    `${LMS_BASE}/user/attendence/getdatewiseattendenceby`,
+    `${LMS_BASE}/user/attendence/getattendencebydatewise`,
     `${LMS_BASE}/user/attendence/ajax`,
     // Try the same page with POST (might handle it server-side)
     ATT_PAGE
   ].filter((v, i, a) => a.indexOf(v) === i) // Remove duplicates
+  
+  logger.info('[datewiseAttendance] Endpoints to try', { 
+    count: possibleEndpoints.length,
+    endpoints: possibleEndpoints.slice(0, 5) // Log first 5
+  })
   
   // Build payload with date fields
   const payload = new URLSearchParams()

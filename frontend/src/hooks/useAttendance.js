@@ -182,7 +182,12 @@ export default function useAttendance() {
     // Get API base URL (use cached or detect)
     const reactApi = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : undefined
     const viteApi = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env.VITE_API_URL : undefined
-    let apiBase = reactApi || viteApi || localStorage.getItem('API_OVERRIDE') || 'http://localhost:3000'
+    // Only use localhost as fallback in development
+    const isDev = (typeof import.meta !== 'undefined' && import.meta.env) 
+      ? import.meta.env.MODE === 'development' || import.meta.env.DEV
+      : typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    
+    let apiBase = reactApi || viteApi || localStorage.getItem('API_OVERRIDE') || (isDev ? 'http://localhost:3000' : null)
 
     // local helper to compute required sessions to reach 75%
     const computeRequired = (present, total) => {

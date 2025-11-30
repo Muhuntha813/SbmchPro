@@ -1,13 +1,18 @@
 // src/config/apiDetector.js
 // API base URL detection and fallback logic
 
-// Candidates to try in order
-export const API_CANDIDATES = [
+// Check if we're in development mode
+const isDevelopment = (typeof import.meta !== 'undefined' && import.meta.env) 
+  ? import.meta.env.MODE === 'development' || import.meta.env.DEV
+  : typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+// Candidates to try in order (only in development)
+export const API_CANDIDATES = isDevelopment ? [
   'http://localhost:3000',
   'http://localhost:3001',
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001'
-]
+] : []
 
 // Fetch with timeout helper
 async function fetchWithTimeout(url, options = {}, timeoutMs = 1500) {
@@ -86,7 +91,7 @@ export async function detectApiBase() {
     }
   }
 
-  // Check environment variables first
+  // Check environment variables first (PRIORITY)
   const reactApi = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : undefined
   const viteApi = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env.VITE_API_URL : undefined
   
@@ -100,22 +105,24 @@ export async function detectApiBase() {
     return viteApi
   }
 
-  // Try candidates sequentially
-  console.info('[apiDetector] Auto-detecting API base URL...')
-  for (const candidate of API_CANDIDATES) {
-    try {
-      const isValid = await testCandidate(candidate)
-      if (isValid) {
-        console.info('[apiDetector] Detected API base:', candidate)
-        return candidate
+  // Only try localhost candidates in development mode
+  if (API_CANDIDATES.length > 0) {
+    console.info('[apiDetector] Auto-detecting API base URL (development mode)...')
+    for (const candidate of API_CANDIDATES) {
+      try {
+        const isValid = await testCandidate(candidate)
+        if (isValid) {
+          console.info('[apiDetector] Detected API base:', candidate)
+          return candidate
+        }
+      } catch (err) {
+        // Continue to next candidate
+        console.debug('[apiDetector] Candidate failed:', candidate, err.message)
       }
-    } catch (err) {
-      // Continue to next candidate
-      console.debug('[apiDetector] Candidate failed:', candidate, err.message)
     }
   }
 
-  console.warn('[apiDetector] No working API base URL found')
+  console.warn('[apiDetector] No working API base URL found. Set VITE_API_URL environment variable.')
   return null
 }
 

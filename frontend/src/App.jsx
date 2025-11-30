@@ -272,7 +272,16 @@ export default function AttendanceApp() {
   const [toDate, setToDate] = useState(() => formatToday())
   const [toast, setToast] = useState({ type: 'info', message: '' })
   const [showBackendModal, setShowBackendModal] = useState(false)
-  const [backendUrl, setBackendUrl] = useState(() => localStorage.getItem('API_OVERRIDE') || 'http://localhost:3000')
+  // Helper to get API base URL
+  const getApiBaseUrl = () => {
+    const reactApi = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : undefined
+    const viteApi = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env.VITE_API_URL : undefined
+    const override = localStorage.getItem('API_OVERRIDE')
+    const isDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    return reactApi || viteApi || override || (isDev ? 'http://localhost:3000' : '')
+  }
+  
+  const [backendUrl, setBackendUrl] = useState(() => localStorage.getItem('API_OVERRIDE') || getApiBaseUrl() || '')
 
   // Animations
   const [animateKey, setAnimateKey] = useState(0)
@@ -297,7 +306,14 @@ export default function AttendanceApp() {
       // Get API base URL
       const reactApi = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : undefined
       const viteApi = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env.VITE_API_URL : undefined
-      const apiBase = reactApi || viteApi || localStorage.getItem('API_OVERRIDE') || 'http://localhost:3000'
+      const override = localStorage.getItem('API_OVERRIDE')
+      const isDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      const apiBase = reactApi || viteApi || override || (isDev ? 'http://localhost:3000' : null)
+      
+      if (!apiBase) {
+        setIsValidatingToken(false)
+        return
+      }
 
       try {
         // Validate token using status endpoint (trim token to remove whitespace)
@@ -1476,7 +1492,11 @@ export default function AttendanceApp() {
         try {
           const reactApi = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : undefined
           const viteApi = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env.VITE_API_URL : undefined
-          const apiBase = reactApi || viteApi || localStorage.getItem('API_OVERRIDE') || 'http://localhost:3000'
+          const override = localStorage.getItem('API_OVERRIDE')
+          const isDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+          const apiBase = reactApi || viteApi || override || (isDev ? 'http://localhost:3000' : null)
+          
+          if (!apiBase) return
           
           const cleanToken = (storedToken || '').trim()
           if (!cleanToken) {
@@ -1674,7 +1694,8 @@ export default function AttendanceApp() {
             setRazorpayLoading(true)
             
             // Poll backend to check subscription status - every 2s for up to 30s
-            const pollApiBase = reactApi || viteApi || localStorage.getItem('API_OVERRIDE') || 'http://localhost:3000'
+            const pollApiBase = reactApi || viteApi || localStorage.getItem('API_OVERRIDE') || (isDev ? 'http://localhost:3000' : null)
+            if (!pollApiBase) return
             const pollToken = localStorage.getItem(TOKEN_KEY)
             if (!pollToken) {
               setToast(prev => {
@@ -2379,9 +2400,15 @@ export default function AttendanceApp() {
                       }
                       
                       const token = localStorage.getItem(TOKEN_KEY) || ''
-                      const apiBase = localStorage.getItem('API_OVERRIDE') || 
-                        (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || 
-                        'http://localhost:3000'
+                      const viteApi = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env.VITE_API_URL : undefined
+                      const override = localStorage.getItem('API_OVERRIDE')
+                      const isDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+                      const apiBase = override || viteApi || (isDev ? 'http://localhost:3000' : null)
+                      
+                      if (!apiBase) {
+                        setError('Backend URL not configured. Please set VITE_API_URL or use "Set Backend" button.')
+                        return
+                      }
                       
                       // Create abort controller for timeout
                       const controller = new AbortController()
@@ -2956,13 +2983,13 @@ export default function AttendanceApp() {
               Set Backend URL
             </h3>
             <p className={classNames('text-sm mb-4', isDarkTheme ? 'text-white/70' : 'text-slate-600')}>
-              Enter the backend API URL (e.g., http://localhost:3000)
+              Enter the backend API URL (e.g., https://your-backend.onrender.com)
             </p>
             <input
               type="text"
               value={backendUrl}
               onChange={(e) => setBackendUrl(e.target.value)}
-              placeholder="http://localhost:3000"
+              placeholder="https://your-backend.onrender.com"
               className={classNames(
                 'w-full rounded-lg p-2.5 mb-4 focus:outline-none focus:ring-2 focus:ring-[var(--accent-1)]',
                 isDarkTheme

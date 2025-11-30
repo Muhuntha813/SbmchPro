@@ -2,6 +2,43 @@
   "buildCommand": "cd frontend && npm ci && npm run build",
   "outputDirectory": "frontend/dist",
   "framework": "vite",
-  "installCommand": "cd frontend && npm ci"
+  "installCommand": "cd frontend && npm ci",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        }
+      ]
+    },
+    {
+      "source": "/sitemap.xml",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/xml"
+        }
+      ]
+    },
+    {
+      "source": "/robots.txt",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/plain"
+        }
+      ]
+    }
+  ]
 }
 

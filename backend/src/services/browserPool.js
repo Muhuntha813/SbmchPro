@@ -122,6 +122,40 @@ function findChromeExecutable() {
 }
 
 /**
+ * Install Chrome at runtime if not found
+ */
+async function installChromeIfNeeded() {
+  try {
+    const cacheDir = process.env.PUPPETEER_CACHE_DIR || 
+                     join(process.env.HOME || '/opt/render', '.cache/puppeteer')
+    
+    logger.info('[browserPool] Attempting to install Chrome at runtime', { cacheDir })
+    
+    const fetcher = puppeteer.createBrowserFetcher({
+      path: cacheDir
+    })
+    
+    const revision = await fetcher.download()
+    logger.info('[browserPool] Chrome installed successfully', {
+      revision: revision.revision,
+      executablePath: revision.executablePath,
+      folderPath: revision.folderPath
+    })
+    
+    return revision.executablePath
+  } catch (err) {
+    logger.error('[browserPool] Failed to install Chrome at runtime', {
+      error: err.message,
+      cacheDir: process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer'
+    })
+    throw err
+  }
+}
+
+// Track if we're currently installing Chrome to avoid multiple simultaneous installations
+let chromeInstallPromise = null
+
+/**
  * Create a new browser instance
  */
 async function createBrowser() {
@@ -129,7 +163,30 @@ async function createBrowser() {
     logger.info('[browserPool] Creating new browser instance')
     
     // Find Chrome executable
-    const chromePath = findChromeExecutable()
+    let chromePath = findChromeExecutable()
+    
+    // If Chrome not found, try to install it at runtime
+    if (!chromePath) {
+      logger.warn('[browserPool] Chrome not found, attempting runtime installation')
+      
+      // Only install once at a time
+      if (!chromeInstallPromise) {
+        chromeInstallPromise = installChromeIfNeeded()
+      }
+      
+      try {
+        chromePath = await chromeInstallPromise
+        chromeInstallPromise = null // Reset after successful installation
+        logger.info('[browserPool] Chrome installed, using path', { path: chromePath })
+      } catch (installErr) {
+        chromeInstallPromise = null // Reset on failure
+        logger.error('[browserPool] Runtime Chrome installation failed', {
+          error: installErr.message,
+          suggestion: 'Chrome must be installed during build. Check build logs.'
+        })
+        // Continue anyway - Puppeteer might still work
+      }
+    }
     
     // Configure executable path for Render (if Chrome is installed via postinstall)
     const launchOptions = {
@@ -166,8 +223,8 @@ async function createBrowser() {
       
       // If Chrome not found, provide helpful error
       if (err.message?.includes('Could not find Chrome') || err.message?.includes('Chrome')) {
-        logger.error('[browserPool] Chrome not found. Attempting to install...', {
-          suggestion: 'Chrome may need to be installed during build. Check build logs.',
+        logger.error('[browserPool] Chrome not found after installation attempt', {
+          suggestion: 'Chrome installation may have failed. Check build logs and ensure PUPPETEER_CACHE_DIR is set correctly.',
           cacheDir: process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer',
           home: process.env.HOME || 'not set'
         })

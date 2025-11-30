@@ -53,6 +53,40 @@ function findChromeExecutable() {
 }
 
 /**
+ * Install Chrome at runtime if not found (for fallback)
+ */
+async function installChromeIfNeeded() {
+  try {
+    const cacheDir = process.env.PUPPETEER_CACHE_DIR || 
+                     join(process.env.HOME || '/opt/render', '.cache/puppeteer')
+    
+    logger.info('[datewiseAttendance] Attempting to install Chrome at runtime', { cacheDir })
+    
+    const fetcher = puppeteer.createBrowserFetcher({
+      path: cacheDir
+    })
+    
+    const revision = await fetcher.download()
+    logger.info('[datewiseAttendance] Chrome installed successfully', {
+      revision: revision.revision,
+      executablePath: revision.executablePath,
+      folderPath: revision.folderPath
+    })
+    
+    return revision.executablePath
+  } catch (err) {
+    logger.error('[datewiseAttendance] Failed to install Chrome at runtime', {
+      error: err.message,
+      cacheDir: process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer'
+    })
+    throw err
+  }
+}
+
+// Track if we're currently installing Chrome to avoid multiple simultaneous installations
+let chromeInstallPromise = null
+
+/**
  * Fallback: Direct Puppeteer launch (original method before pooling)
  * Used when browser pool fails
  */
@@ -63,7 +97,30 @@ async function scrapeWithDirectPuppeteer({ username, password, dateToFetch }) {
     logger.info('[datewiseAttendance] Using direct Puppeteer (fallback)', { username, dateToFetch })
     
     // Find Chrome executable
-    const chromePath = findChromeExecutable()
+    let chromePath = findChromeExecutable()
+    
+    // If Chrome not found, try to install it at runtime
+    if (!chromePath) {
+      logger.warn('[datewiseAttendance] Chrome not found, attempting runtime installation')
+      
+      // Only install once at a time
+      if (!chromeInstallPromise) {
+        chromeInstallPromise = installChromeIfNeeded()
+      }
+      
+      try {
+        chromePath = await chromeInstallPromise
+        chromeInstallPromise = null // Reset after successful installation
+        logger.info('[datewiseAttendance] Chrome installed, using path', { path: chromePath })
+      } catch (installErr) {
+        chromeInstallPromise = null // Reset on failure
+        logger.error('[datewiseAttendance] Runtime Chrome installation failed', {
+          error: installErr.message,
+          suggestion: 'Chrome must be installed during build. Check build logs.'
+        })
+        // Continue anyway - Puppeteer might still work
+      }
+    }
     
     const launchOptions = {
       headless: 'new',
@@ -93,7 +150,7 @@ async function scrapeWithDirectPuppeteer({ username, password, dateToFetch }) {
         error: err.message,
         code: err.code,
         chromePath: chromePath || 'not set',
-        suggestion: 'Chrome may not be installed. Check build logs for installation errors.'
+        suggestion: 'Chrome installation may have failed. Check build logs and ensure PUPPETEER_CACHE_DIR is set correctly.'
       })
       throw err
     })

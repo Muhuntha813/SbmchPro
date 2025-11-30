@@ -245,7 +245,9 @@ export async function scrapeDatewiseAttendance({ username, password, dateToFetch
 
       try {
       page = await browser.newPage()
-      page.setDefaultTimeout(20000)
+      // Reduced timeout for Render free tier (30s request limit)
+      // Set page timeout to 18s to leave buffer for other operations
+      page.setDefaultTimeout(18000)
 
       logger.info('[datewiseAttendance] Opening login page')
       await page.goto(LOGIN_URL, { waitUntil: 'networkidle2' })

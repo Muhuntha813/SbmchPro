@@ -1160,12 +1160,23 @@ app.post('/api/attendance/datewise', requireAuth, asyncHandler(async (req, res) 
 
     logger.info('[datewise] Fetching date-wise attendance', { username, date })
 
-    // Scrape using Puppeteer
-    const result = await scrapeDatewiseAttendance({
+    // Scrape using Puppeteer with timeout (Render free tier has 30s request timeout)
+    // Set timeout to 25 seconds to avoid hitting Render's limit
+    const SCRAPE_TIMEOUT_MS = 25000 // 25 seconds (Render free tier timeout is ~30s)
+    
+    const scrapePromise = scrapeDatewiseAttendance({
       username,
       password,
       dateToFetch: date
     })
+    
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('Scraping timeout: Request took too long. Render free tier has a 30 second request limit.'))
+      }, SCRAPE_TIMEOUT_MS)
+    })
+    
+    const result = await Promise.race([scrapePromise, timeoutPromise])
 
     logger.info('[datewise] Successfully fetched attendance', { 
       username, 
@@ -1186,8 +1197,24 @@ app.post('/api/attendance/datewise', requireAuth, asyncHandler(async (req, res) 
 
     // Return user-friendly error message
     const errorMessage = err.message || 'Failed to fetch date-wise attendance'
-    const statusCode = errorMessage.includes('Browser service unavailable') || 
-                       errorMessage.includes('Puppeteer cannot launch') ? 503 : 500
+    
+    // Determine status code based on error type
+    let statusCode = 500
+    if (errorMessage.includes('Browser service unavailable') || 
+        errorMessage.includes('Puppeteer cannot launch') ||
+        errorMessage.includes('timeout') ||
+        errorMessage.includes('Scraping timeout')) {
+      statusCode = 503
+    } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+      statusCode = 504 // Gateway Timeout
+    }
+
+    logger.error('[datewise] Returning error response', {
+      statusCode,
+      errorMessage,
+      username: req.user?.student_id,
+      date
+    })
 
     return res.status(statusCode).json({
       error: 'Failed to fetch date-wise attendance',
@@ -1196,7 +1223,8 @@ app.post('/api/attendance/datewise', requireAuth, asyncHandler(async (req, res) 
       ...(process.env.NODE_ENV === 'development' && {
         details: {
           code: err.code,
-          name: err.name
+          name: err.name,
+          stack: err.stack
         }
       })
     })

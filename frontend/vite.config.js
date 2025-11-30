@@ -11,7 +11,9 @@ export default defineConfig({
   plugins: [react()],
   root: __dirname,
   build: {
-    outDir: path.resolve(__dirname, 'dist'),
+    // When building from root (via --config), output to root dist/
+    // When building from frontend/, output to frontend/dist/
+    outDir: process.env.VERCEL ? path.resolve(process.cwd(), 'dist') : path.resolve(__dirname, 'dist'),
     emptyOutDir: true,
   },
 })

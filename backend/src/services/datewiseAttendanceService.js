@@ -102,27 +102,85 @@ async function loginToLms({ username, password }) {
  * Parse attendance rows from HTML
  */
 function parseDatewiseAttendanceRows(html) {
-  if (!html) return []
-  const $ = cheerio.load(html)
-  const rows = []
-  
-  const resultBox = $('.attendance_result')
-  const table = resultBox.length ? resultBox.find('table') : $('table')
-  
-  if (!table.length) {
-    logger.warn('[datewiseAttendance] No attendance table found in result page')
+  if (!html) {
+    logger.warn('[datewiseAttendance] Empty HTML provided to parser')
     return []
   }
   
-  table.find('tbody tr').each((_, tr) => {
+  const $ = cheerio.load(html)
+  const rows = []
+  
+  // Try multiple selectors to find the attendance table
+  let table = null
+  
+  // First try: .attendance_result table
+  const resultBox = $('.attendance_result')
+  if (resultBox.length) {
+    table = resultBox.find('table').first()
+    logger.debug('[datewiseAttendance] Found table in .attendance_result')
+  }
+  
+  // Second try: Any table with tbody
+  if (!table || table.length === 0) {
+    table = $('table tbody').parent().first()
+    if (table.length) {
+      logger.debug('[datewiseAttendance] Found table with tbody')
+    }
+  }
+  
+  // Third try: Any table
+  if (!table || table.length === 0) {
+    table = $('table').first()
+    if (table.length) {
+      logger.debug('[datewiseAttendance] Found first table on page')
+    }
+  }
+  
+  if (!table || table.length === 0) {
+    logger.warn('[datewiseAttendance] No attendance table found in result page', {
+      htmlLength: html.length,
+      hasAttendanceResult: html.includes('attendance_result'),
+      hasTable: html.includes('<table'),
+      htmlPreview: html.substring(0, 1000)
+    })
+    return []
+  }
+  
+  // Find all rows in tbody (or all tr if no tbody)
+  const tbody = table.find('tbody')
+  const trs = tbody.length > 0 ? tbody.find('tr') : table.find('tr')
+  
+  logger.debug('[datewiseAttendance] Found table rows', { 
+    rowCount: trs.length,
+    hasTbody: tbody.length > 0
+  })
+  
+  trs.each((_, tr) => {
     const $tr = $(tr)
     const tds = $tr.find('td')
-    if (tds.length < 4) return
     
-    const subject = cleanText($(tds[0]).text())
-    const time_from = cleanText($(tds[1]).text())
-    const time_to = cleanText($(tds[2]).text())
-    const attendance = cleanText($(tds[3]).text())
+    // Skip header rows or rows with less than 3 cells
+    if (tds.length < 3) {
+      return
+    }
+    
+    // Extract text from each cell
+    const cells = []
+    tds.each((_, td) => {
+      cells.push(cleanText($(td).text()))
+    })
+    
+    // Date-wise attendance typically has: Subject, Time From, Time To, Attendance Status
+    // But it might vary, so we'll be flexible
+    const subject = cells[0] || ''
+    const time_from = cells[1] || ''
+    const time_to = cells[2] || ''
+    const attendance = cells[3] || ''
+    
+    // Skip empty rows
+    if (!subject && !time_from && !time_to && !attendance) {
+      return
+    }
     
     rows.push({
       subject,
@@ -131,6 +189,8 @@ function parseDatewiseAttendanceRows(html) {
       attendance
     })
   })
+  
+  logger.info('[datewiseAttendance] Parsed attendance rows', { rowCount: rows.length })
   
   return rows
 }
@@ -155,95 +215,207 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
     throw new Error('Session invalid – attendance page returned login page.')
   }
   
-  // Try to find the form and submit it with the date
-  // Look for form action or try to submit via API endpoint
-  // First, try to find if there's an API endpoint for date-wise attendance
-  const form = $page('form')
-  let formAction = form.attr('action') || ''
+  // Log the page HTML structure for debugging
+  logger.debug('[datewiseAttendance] Attendance page loaded', {
+    hasForm: $page('form').length > 0,
+    hasDateInputs: $page('input[name="dob"], input#dob, input[name="end_dob"], input#end_dob').length,
+    pageTitle: $page('title').text()
+  })
   
-  // If no form action, try common API patterns
-  if (!formAction || formAction === '#') {
-    // Try common date-wise attendance API endpoints
-    const possibleEndpoints = [
-      `${LMS_BASE}/user/attendence/getdatewiseattendence`,
-      `${LMS_BASE}/user/attendence/getdatewiseattendance`,
-      `${LMS_BASE}/user/attendence/datewise`,
-      `${LMS_BASE}/user/attendence/submit`,
-      ATT_PAGE // Fallback to same page
-    ]
-    
-    // Try submitting to the attendance page with form data
-    const payload = new URLSearchParams()
-    payload.set('dob', dateToFetch)
-    payload.set('end_dob', dateToFetch)
-    
-    // Get any hidden form fields
-    $page('input[type="hidden"]').each((_, el) => {
-      const name = $page(el).attr('name')
-      const value = $page(el).attr('value') || ''
-      if (name) {
-        payload.set(name, value)
-      }
-    })
-    
-    // Try submitting to the attendance page
-    const submitResponse = await client(ATT_PAGE, {
-      method: 'POST',
-      headers: withDefaultHeaders({
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Referer: ATT_PAGE,
-        Origin: ORIGIN
-      }),
-      body: payload
-    })
-    
-    if (!submitResponse.ok) {
-      throw new Error(`Date-wise attendance request failed (${submitResponse.status})`)
+  // Look for date input fields to understand the form structure
+  const dobInput = $page('input[name="dob"], input#dob').first()
+  const endDobInput = $page('input[name="end_dob"], input#end_dob').first()
+  
+  logger.info('[datewiseAttendance] Found date inputs', {
+    dobExists: dobInput.length > 0,
+    endDobExists: endDobInput.length > 0,
+    dobName: dobInput.attr('name') || dobInput.attr('id'),
+    endDobName: endDobInput.attr('name') || endDobInput.attr('id')
+  })
+  
+  // Try to find AJAX endpoint by looking for script tags or data attributes
+  // Many LMS systems use AJAX endpoints for date-wise attendance
+  let apiEndpoint = null
+  
+  // Look for common API endpoint patterns in the page
+  const pageText = attendancePageHtml
+  const apiPatterns = [
+    /\/user\/attendence\/[^"'\s]*date[^"'\s]*/gi,
+    /\/user\/attendence\/[^"'\s]*get[^"'\s]*/gi,
+    /\/user\/attendence\/[^"'\s]*ajax[^"'\s]*/gi
+  ]
+  
+  for (const pattern of apiPatterns) {
+    const matches = pageText.match(pattern)
+    if (matches && matches.length > 0) {
+      apiEndpoint = matches[0]
+      logger.info('[datewiseAttendance] Found potential API endpoint in page', { endpoint: apiEndpoint })
+      break
     }
-    
-    const resultHtml = await submitResponse.text()
-    const rows = parseDatewiseAttendanceRows(resultHtml)
-    
-    return rows
-  } else {
-    // Use the form action
-    const formUrl = new URL(formAction, ATT_PAGE).toString()
-    const payload = new URLSearchParams()
-    payload.set('dob', dateToFetch)
-    payload.set('end_dob', dateToFetch)
-    
-    // Get all form fields
-    $page('form input').each((_, el) => {
-      const name = $page(el).attr('name')
-      const type = $page(el).attr('type')
-      const value = $page(el).attr('value') || ''
-      
-      if (name && type !== 'submit' && type !== 'button') {
-        if (type === 'hidden' || name === 'dob' || name === 'end_dob') {
-          payload.set(name, value || (name.includes('dob') ? dateToFetch : value))
-        }
-      }
-    })
-    
-    const submitResponse = await client(formUrl, {
-      method: 'POST',
-      headers: withDefaultHeaders({
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Referer: ATT_PAGE,
-        Origin: ORIGIN
-      }),
-      body: payload
-    })
-    
-    if (!submitResponse.ok) {
-      throw new Error(`Date-wise attendance form submission failed (${submitResponse.status})`)
-    }
-    
-    const resultHtml = await submitResponse.text()
-    const rows = parseDatewiseAttendanceRows(resultHtml)
-    
-    return rows
   }
+  
+  // Try common date-wise attendance API endpoints
+  const possibleEndpoints = [
+    `${LMS_BASE}/user/attendence/getdatewiseattendence`,
+    `${LMS_BASE}/user/attendence/getdatewiseattendance`,
+    `${LMS_BASE}/user/attendence/datewiseattendence`,
+    `${LMS_BASE}/user/attendence/datewiseattendance`,
+    `${LMS_BASE}/user/attendence/getattendencebydate`,
+    `${LMS_BASE}/user/attendence/getattendancebydate`,
+    `${LMS_BASE}/user/attendence/ajax`,
+    apiEndpoint ? `${LMS_BASE}${apiEndpoint}` : null
+  ].filter(Boolean)
+  
+  // Build payload with date fields
+  const payload = new URLSearchParams()
+  
+  // Try different field name variations
+  const dateFieldNames = ['dob', 'end_dob', 'date', 'end_date', 'start_date', 'attendance_date']
+  for (const fieldName of dateFieldNames) {
+    const input = $page(`input[name="${fieldName}"], input#${fieldName}`).first()
+    if (input.length > 0) {
+      payload.set(fieldName, dateToFetch)
+      logger.debug('[datewiseAttendance] Added date field to payload', { fieldName, value: dateToFetch })
+    }
+  }
+  
+  // If no date inputs found, use common field names
+  if (payload.toString() === '') {
+    payload.set('dob', dateToFetch)
+    payload.set('end_dob', dateToFetch)
+    logger.warn('[datewiseAttendance] No date inputs found, using default field names')
+  }
+  
+  // Get any hidden form fields (CSRF tokens, etc.)
+  $page('input[type="hidden"]').each((_, el) => {
+    const name = $page(el).attr('name')
+    const value = $page(el).attr('value') || ''
+    if (name && !payload.has(name)) {
+      payload.set(name, value)
+      logger.debug('[datewiseAttendance] Added hidden field', { name, value })
+    }
+  })
+  
+  // Try each possible endpoint
+  let lastError = null
+  for (const endpoint of possibleEndpoints) {
+    try {
+      logger.info('[datewiseAttendance] Trying API endpoint', { endpoint })
+      
+      const response = await client(endpoint, {
+        method: 'POST',
+        headers: withDefaultHeaders({
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest',
+          Referer: ATT_PAGE,
+          Accept: 'application/json, text/javascript, */*; q=0.01'
+        }),
+        body: payload
+      })
+      
+      if (!response.ok) {
+        logger.warn('[datewiseAttendance] Endpoint returned non-OK status', { 
+          endpoint, 
+          status: response.status 
+        })
+        lastError = new Error(`Request failed with status ${response.status}`)
+        continue
+      }
+      
+      // Try to parse as JSON first (common for AJAX endpoints)
+      const contentType = response.headers.get('content-type') || ''
+      let resultHtml = ''
+      
+      if (contentType.includes('application/json')) {
+        const json = await response.json()
+        logger.debug('[datewiseAttendance] Received JSON response', { 
+          endpoint,
+          hasResultPage: !!json.result_page,
+          status: json.status
+        })
+        
+        // Some APIs return HTML in a JSON field
+        if (json.result_page) {
+          resultHtml = json.result_page
+        } else if (json.html) {
+          resultHtml = json.html
+        } else if (json.data) {
+          resultHtml = typeof json.data === 'string' ? json.data : JSON.stringify(json.data)
+        } else {
+          // If JSON doesn't have HTML, try to extract data directly
+          if (json.rows || json.data) {
+            const rows = json.rows || json.data || []
+            if (Array.isArray(rows) && rows.length > 0) {
+              logger.info('[datewiseAttendance] Found rows in JSON response', { 
+                endpoint, 
+                rowCount: rows.length 
+              })
+              return rows
+            }
+          }
+        }
+      } else {
+        resultHtml = await response.text()
+      }
+      
+      // Parse HTML response
+      const rows = parseDatewiseAttendanceRows(resultHtml)
+      
+      if (rows.length > 0) {
+        logger.info('[datewiseAttendance] Successfully fetched attendance', { 
+          endpoint, 
+          rowCount: rows.length 
+        })
+        return rows
+      } else {
+        logger.warn('[datewiseAttendance] No rows found in response', { 
+          endpoint,
+          htmlLength: resultHtml.length,
+          hasAttendanceResult: resultHtml.includes('attendance_result')
+        })
+      }
+    } catch (err) {
+      logger.warn('[datewiseAttendance] Endpoint request failed', { 
+        endpoint, 
+        error: err.message 
+      })
+      lastError = err
+      continue
+    }
+  }
+  
+  // If all API endpoints failed, try form submission as fallback
+  logger.info('[datewiseAttendance] All API endpoints failed, trying form submission')
+  const form = $page('form').first()
+  const formAction = form.attr('action') || ATT_PAGE
+  const formUrl = new URL(formAction, ATT_PAGE).toString()
+  
+  const submitResponse = await client(formUrl, {
+    method: 'POST',
+    headers: withDefaultHeaders({
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Referer: ATT_PAGE,
+      Origin: ORIGIN
+    }),
+    body: payload
+  })
+  
+  if (!submitResponse.ok) {
+    throw lastError || new Error(`Date-wise attendance request failed (${submitResponse.status})`)
+  }
+  
+  const resultHtml = await submitResponse.text()
+  const rows = parseDatewiseAttendanceRows(resultHtml)
+  
+  if (rows.length === 0) {
+    logger.warn('[datewiseAttendance] No rows found after form submission', {
+      htmlLength: resultHtml.length,
+      hasAttendanceResult: resultHtml.includes('attendance_result'),
+      htmlPreview: resultHtml.substring(0, 500)
+    })
+  }
+  
+  return rows
 }
 
 // Simple in-memory cache for datewise attendance (5 minute TTL)

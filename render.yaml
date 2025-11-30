@@ -5,7 +5,7 @@ services:
     plan: free
     region: oregon
     rootDir: backend
-    buildCommand: npm install && npx puppeteer browsers install chrome
+    buildCommand: npm install && PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer npx puppeteer browsers install chrome
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -19,4 +19,5 @@ services:
       # - SECRET or JWT_SECRET (required)
       # - DATABASE_URL (required)
       # - FRONTEND_URL (optional, for CORS)
+      # - PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer (optional, for Chrome location)
 

@@ -1,11 +1,56 @@
 import logger from '../../lib/logger.js'
 import { withBrowser } from './browserPool.js'
 import puppeteer from 'puppeteer'
+import { existsSync } from 'fs'
+import { join } from 'path'
 
 const LOGIN_URL = 'https://sbmchlms.com/lms/site/userlogin'
 const ATT_PAGE = 'https://sbmchlms.com/lms/user/attendence'
 
 const sleep = ms => new Promise(res => setTimeout(res, ms))
+
+/**
+ * Find Chrome executable path (same logic as browserPool)
+ */
+function findChromeExecutable() {
+  // Check environment variable first
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    if (existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+      return process.env.PUPPETEER_EXECUTABLE_PATH
+    }
+  }
+  
+  // Common Puppeteer cache locations
+  const possiblePaths = [
+    // Render/Linux default
+    join(process.env.HOME || '/opt/render', '.cache/puppeteer/chrome'),
+    // Alternative Render path
+    '/opt/render/.cache/puppeteer/chrome',
+    // System Chrome
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ]
+  
+  // Try to find Chrome in common locations
+  for (const basePath of possiblePaths) {
+    const chromeVariants = [
+      join(basePath, 'chrome-linux64/chrome'),
+      join(basePath, 'chrome/chrome'),
+      join(basePath, 'chrome'),
+      basePath,
+    ]
+    
+    for (const chromePath of chromeVariants) {
+      if (existsSync(chromePath)) {
+        logger.info('[datewiseAttendance] Found Chrome at', { path: chromePath })
+        return chromePath
+      }
+    }
+  }
+  
+  return null
+}
 
 /**
  * Fallback: Direct Puppeteer launch (original method before pooling)
@@ -16,6 +61,9 @@ async function scrapeWithDirectPuppeteer({ username, password, dateToFetch }) {
   
   try {
     logger.info('[datewiseAttendance] Using direct Puppeteer (fallback)', { username, dateToFetch })
+    
+    // Find Chrome executable
+    const chromePath = findChromeExecutable()
     
     const launchOptions = {
       headless: 'new',
@@ -32,16 +80,20 @@ async function scrapeWithDirectPuppeteer({ username, password, dateToFetch }) {
       protocolTimeout: 18000 // Match page timeout
     }
     
-    // Use custom Chrome path if provided
-    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-      launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH
+    // Use found Chrome path
+    if (chromePath) {
+      launchOptions.executablePath = chromePath
+      logger.info('[datewiseAttendance] Using Chrome executable path', { path: chromePath })
+    } else {
+      logger.warn('[datewiseAttendance] Chrome executable not found, Puppeteer will try to auto-detect')
     }
     
     browser = await puppeteer.launch(launchOptions).catch((err) => {
       logger.error('[datewiseAttendance] Puppeteer launch failed in fallback', {
         error: err.message,
         code: err.code,
-        suggestion: 'Chrome may not be installed. Run: npx puppeteer browsers install chrome'
+        chromePath: chromePath || 'not set',
+        suggestion: 'Chrome may not be installed. Check build logs for installation errors.'
       })
       throw err
     })

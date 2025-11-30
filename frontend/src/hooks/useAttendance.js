@@ -5,7 +5,14 @@ import { detectApiBase } from '../config/apiDetector.js'
 const TOKEN_KEY = 'ATT_TOKEN'
 
 export default function useAttendance() {
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || '')
+  const [token, setToken] = useState(() => {
+    try {
+      return localStorage.getItem(TOKEN_KEY) || ''
+    } catch (e) {
+      console.warn('[useAttendance] localStorage unavailable, starting without token:', e.message)
+      return ''
+    }
+  })
   const [studentName, setStudentName] = useState('')
   const [attendance, setAttendance] = useState([])
   const [upcomingClasses, setUpcomingClasses] = useState([])
@@ -117,7 +124,12 @@ export default function useAttendance() {
       
       // Success - store token and navigate (trim to remove any whitespace)
       const cleanToken = (data.token || '').trim()
-      localStorage.setItem(TOKEN_KEY, cleanToken)
+      try {
+        localStorage.setItem(TOKEN_KEY, cleanToken)
+      } catch (e) {
+        console.warn('[useAttendance] Could not save token to localStorage:', e.message)
+        // Continue anyway - token is still in state
+      }
       setToken(cleanToken)
       setIsFallback(false)
       return { ok: true, success: true, token: data.token, user: data.user }
@@ -169,7 +181,13 @@ export default function useAttendance() {
     setIsFallback(false)
 
     // Always read from localStorage to get the latest token (state might be stale)
-    const rawToken = t || localStorage.getItem(TOKEN_KEY) || token
+    let rawToken = t || token
+    try {
+      rawToken = t || localStorage.getItem(TOKEN_KEY) || token
+    } catch (e) {
+      // localStorage unavailable, use token from state
+      console.warn('[useAttendance] localStorage unavailable, using token from state:', e.message)
+    }
     const tokenToUse = rawToken ? rawToken.trim() : null
     
     if (!tokenToUse) {
@@ -312,7 +330,11 @@ export default function useAttendance() {
   }, [token])
 
   const logout = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY)
+    try {
+      localStorage.removeItem(TOKEN_KEY)
+    } catch (e) {
+      console.warn('[useAttendance] Could not remove token from localStorage:', e.message)
+    }
     setToken('')
     setAttendance([])
     setStudentName('')

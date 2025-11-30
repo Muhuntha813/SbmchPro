@@ -173,40 +173,59 @@ function ProgressRing({ percent, gradientId }) {
 // Main Component (default export)
 // =====================
 export default function AttendanceApp() {
-  // Theme handling: three themes
+  // Theme handling: three themes with error handling
   const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem(THEME_KEY)
-    // Migrate old values 'dark'/'light' if present
-    if (saved === 'dark') return 'cool-down-buddy'
-    if (saved === 'light') return 'daylight-bliss'
-    return saved || 'cool-down-buddy'
+    try {
+      const saved = localStorage.getItem(THEME_KEY)
+      // Migrate old values 'dark'/'light' if present
+      if (saved === 'dark') return 'cool-down-buddy'
+      if (saved === 'light') return 'daylight-bliss'
+      return saved || 'cool-down-buddy'
+    } catch (e) {
+      // localStorage unavailable, use default
+      console.warn('[Theme] localStorage unavailable in useState, using default:', e.message)
+      return 'cool-down-buddy'
+    }
   })
 
   useEffect(() => {
-    const darkThemes = ['cool-down-buddy', 'midnight-drift']
-    const themeClassMap = {
-      'cool-down-buddy': 'theme-cool',
-      'midnight-drift': 'theme-midnight',
-      'daylight-bliss': 'theme-daylight'
+    try {
+      const darkThemes = ['cool-down-buddy', 'midnight-drift']
+      const themeClassMap = {
+        'cool-down-buddy': 'theme-cool',
+        'midnight-drift': 'theme-midnight',
+        'daylight-bliss': 'theme-daylight'
+      }
+      // Dark mode toggle for Tailwind
+      const isDark = darkThemes.includes(theme)
+      document.documentElement.classList.toggle('dark', isDark)
+      // Switch body theme class
+      document.body.classList.remove('theme-cool', 'theme-midnight', 'theme-daylight')
+      document.body.classList.add(themeClassMap[theme] || 'theme-cool')
+      // Accent colors per theme
+      if (theme === 'cool-down-buddy') {
+        document.body.style.setProperty('--accent-1', '#22d3ee')
+        document.body.style.setProperty('--accent-2', '#6366f1')
+      } else if (theme === 'midnight-drift') {
+        document.body.style.setProperty('--accent-1', '#8b5cf6')
+        document.body.style.setProperty('--accent-2', '#0ea5e9')
+      } else {
+        document.body.style.setProperty('--accent-1', '#f59e0b')
+        document.body.style.setProperty('--accent-2', '#ef4444')
+      }
+      // Try to save theme, but don't fail if localStorage is blocked
+      try {
+        localStorage.setItem(THEME_KEY, theme)
+      } catch (e) {
+        // localStorage write failed, but theme is already applied
+        console.warn('[Theme] Could not save theme to localStorage:', e.message)
+      }
+    } catch (e) {
+      // DOM manipulation failed, apply default theme
+      console.error('[Theme] Failed to apply theme:', e.message)
+      document.body.classList.add('theme-cool')
+      document.documentElement.classList.add('dark')
     }
-    // Dark mode toggle for Tailwind
-    const isDark = darkThemes.includes(theme)
-    document.documentElement.classList.toggle('dark', isDark)
-    // Switch body theme class
-    document.body.classList.remove('theme-cool', 'theme-midnight', 'theme-daylight')
-    document.body.classList.add(themeClassMap[theme] || 'theme-cool')
-    // Accent colors per theme
-    if (theme === 'cool-down-buddy') {
-      document.body.style.setProperty('--accent-1', '#22d3ee')
-      document.body.style.setProperty('--accent-2', '#6366f1')
-    } else if (theme === 'midnight-drift') {
-      document.body.style.setProperty('--accent-1', '#8b5cf6')
-      document.body.style.setProperty('--accent-2', '#0ea5e9')
-    } else {
-      document.body.style.setProperty('--accent-1', '#f59e0b')
-      document.body.style.setProperty('--accent-2', '#ef4444')
-    }
-    localStorage.setItem(THEME_KEY, theme)
   }, [theme])
 
   // Theme helpers for conditional light/dark UI tweaks
@@ -262,13 +281,40 @@ export default function AttendanceApp() {
     }
   }, [selectedDate, activeTab])
 
-  // Auth form
-  const savedRemember = localStorage.getItem(REMEMBER_KEY) === '1'
+  // Auth form with error handling for localStorage
+  const savedRemember = (() => {
+    try {
+      return localStorage.getItem(REMEMBER_KEY) === '1'
+    } catch (e) {
+      return false
+    }
+  })()
   const [rememberMe, setRememberMe] = useState(savedRemember)
-  const [username, setUsername] = useState(() => (savedRemember ? localStorage.getItem(USER_KEY) || '' : ''))
-  const [password, setPassword] = useState(() => (savedRemember ? localStorage.getItem(PASS_KEY) || '' : ''))
+  const [username, setUsername] = useState(() => {
+    if (!savedRemember) return ''
+    try {
+      return localStorage.getItem(USER_KEY) || ''
+    } catch (e) {
+      return ''
+    }
+  })
+  const [password, setPassword] = useState(() => {
+    if (!savedRemember) return ''
+    try {
+      return localStorage.getItem(PASS_KEY) || ''
+    } catch (e) {
+      return ''
+    }
+  })
   const [showPassword, setShowPassword] = useState(false)
-  const [fromDate, setFromDate] = useState(() => (savedRemember ? localStorage.getItem(FROM_KEY) || '08-10-2025' : '08-10-2025'))
+  const [fromDate, setFromDate] = useState(() => {
+    if (!savedRemember) return '08-10-2025'
+    try {
+      return localStorage.getItem(FROM_KEY) || '08-10-2025'
+    } catch (e) {
+      return '08-10-2025'
+    }
+  })
   const [toDate, setToDate] = useState(() => formatToday())
   const [toast, setToast] = useState({ type: 'info', message: '' })
   const [showBackendModal, setShowBackendModal] = useState(false)
@@ -276,12 +322,23 @@ export default function AttendanceApp() {
   const getApiBaseUrl = () => {
     const reactApi = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : undefined
     const viteApi = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env.VITE_API_URL : undefined
-    const override = localStorage.getItem('API_OVERRIDE')
+    let override = null
+    try {
+      override = localStorage.getItem('API_OVERRIDE')
+    } catch (e) {
+      // localStorage unavailable, ignore override
+    }
     const isDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     return reactApi || viteApi || override || (isDev ? 'http://localhost:3000' : '')
   }
   
-  const [backendUrl, setBackendUrl] = useState(() => localStorage.getItem('API_OVERRIDE') || getApiBaseUrl() || '')
+  const [backendUrl, setBackendUrl] = useState(() => {
+    try {
+      return localStorage.getItem('API_OVERRIDE') || getApiBaseUrl() || ''
+    } catch (e) {
+      return getApiBaseUrl() || ''
+    }
+  })
 
   // Animations
   const [animateKey, setAnimateKey] = useState(0)
@@ -297,7 +354,14 @@ export default function AttendanceApp() {
   // Validate token on initial mount before redirecting to dashboard
   useEffect(() => {
     const validateTokenAndRedirect = async () => {
-      const storedToken = localStorage.getItem(TOKEN_KEY)
+      let storedToken = null
+      try {
+        storedToken = localStorage.getItem(TOKEN_KEY)
+      } catch (e) {
+        console.warn('[App] localStorage unavailable for token check:', e.message)
+        setIsValidatingToken(false)
+        return
+      }
       if (!storedToken) {
         setIsValidatingToken(false)
         return
@@ -319,7 +383,11 @@ export default function AttendanceApp() {
         // Validate token using status endpoint (trim token to remove whitespace)
         const cleanToken = (storedToken || '').trim()
         if (!cleanToken) {
-          localStorage.removeItem(TOKEN_KEY)
+          try {
+            localStorage.removeItem(TOKEN_KEY)
+          } catch (e) {
+            // Ignore localStorage errors
+          }
           setIsValidatingToken(false)
           return
         }
@@ -332,13 +400,21 @@ export default function AttendanceApp() {
           setView('dashboard')
         } else {
           // Token is invalid or expired - remove it and stay on login
-          localStorage.removeItem(TOKEN_KEY)
+          try {
+            localStorage.removeItem(TOKEN_KEY)
+          } catch (e) {
+            // Ignore localStorage errors
+          }
           setView('login')
         }
       } catch (err) {
         // Network error or backend unavailable - remove token and stay on login
         console.log('[App] Token validation failed, staying on login:', err.message)
-        localStorage.removeItem(TOKEN_KEY)
+        try {
+          localStorage.removeItem(TOKEN_KEY)
+        } catch (e) {
+          // Ignore localStorage errors
+        }
         setView('login')
       } finally {
         setIsValidatingToken(false)
@@ -460,18 +536,23 @@ export default function AttendanceApp() {
     clearError() // Clear any previous errors before attempting login
     const result = await login({ username, password, fromDate, toDate })
     // Persist credentials based on Remember Me
-    if (rememberMe) {
-      localStorage.setItem(REMEMBER_KEY, '1')
-      localStorage.setItem(USER_KEY, username)
-      localStorage.setItem(PASS_KEY, password)
-      localStorage.setItem(FROM_KEY, fromDate)
-      localStorage.setItem(TO_KEY, toDate)
-    } else {
-      localStorage.removeItem(REMEMBER_KEY)
-      localStorage.removeItem(USER_KEY)
-      localStorage.removeItem(PASS_KEY)
-      localStorage.removeItem(FROM_KEY)
-      localStorage.removeItem(TO_KEY)
+    try {
+      if (rememberMe) {
+        localStorage.setItem(REMEMBER_KEY, '1')
+        localStorage.setItem(USER_KEY, username)
+        localStorage.setItem(PASS_KEY, password)
+        localStorage.setItem(FROM_KEY, fromDate)
+        localStorage.setItem(TO_KEY, toDate)
+      } else {
+        localStorage.removeItem(REMEMBER_KEY)
+        localStorage.removeItem(USER_KEY)
+        localStorage.removeItem(PASS_KEY)
+        localStorage.removeItem(FROM_KEY)
+        localStorage.removeItem(TO_KEY)
+      }
+    } catch (e) {
+      console.warn('[App] Could not save/remove remember me data:', e.message)
+      // Continue anyway - login will still work
     }
     if (result?.ok && result?.success) {
       console.log('[handleLogin] success')

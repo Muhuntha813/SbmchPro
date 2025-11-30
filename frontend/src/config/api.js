@@ -13,7 +13,15 @@ export function getApiBase() {
   const fallbackApi = typeof process !== 'undefined' && process.env ? process.env.API_BASE : undefined;
   
   // Check localStorage override
-  const override = typeof window !== 'undefined' ? localStorage.getItem('API_OVERRIDE') : null;
+  let override = null;
+  if (typeof window !== 'undefined') {
+    try {
+      override = localStorage.getItem('API_OVERRIDE');
+    } catch (e) {
+      // localStorage unavailable, ignore override
+      console.warn('[api] localStorage unavailable, ignoring API_OVERRIDE:', e.message);
+    }
+  }
   
   // Only use localhost as fallback in development mode
   const isDevelopment = (typeof import.meta !== 'undefined' && import.meta.env) 

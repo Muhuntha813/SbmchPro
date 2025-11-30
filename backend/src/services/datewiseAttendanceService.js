@@ -17,7 +17,7 @@ async function scrapeWithDirectPuppeteer({ username, password, dateToFetch }) {
   try {
     logger.info('[datewiseAttendance] Using direct Puppeteer (fallback)', { username, dateToFetch })
     
-    browser = await puppeteer.launch({
+    const launchOptions = {
       headless: 'new',
       defaultViewport: { width: 1280, height: 900 },
       args: [
@@ -30,6 +30,20 @@ async function scrapeWithDirectPuppeteer({ username, password, dateToFetch }) {
         '--memory-pressure-off'
       ],
       protocolTimeout: 18000 // Match page timeout
+    }
+    
+    // Use custom Chrome path if provided
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH
+    }
+    
+    browser = await puppeteer.launch(launchOptions).catch((err) => {
+      logger.error('[datewiseAttendance] Puppeteer launch failed in fallback', {
+        error: err.message,
+        code: err.code,
+        suggestion: 'Chrome may not be installed. Run: npx puppeteer browsers install chrome'
+      })
+      throw err
     })
 
     const page = await browser.newPage()

@@ -61,7 +61,9 @@ function getLaunchArgs() {
 async function createBrowser() {
   try {
     logger.info('[browserPool] Creating new browser instance')
-    const browser = await puppeteer.launch({
+    
+    // Configure executable path for Render (if Chrome is installed via postinstall)
+    const launchOptions = {
       headless: 'new',
       defaultViewport: { width: 1280, height: 900 },
       args: getLaunchArgs(),
@@ -71,8 +73,30 @@ async function createBrowser() {
       handleSIGINT: false,
       handleSIGTERM: false,
       handleSIGHUP: false,
-    }).catch((err) => {
-      logger.error('[browserPool] Puppeteer launch failed', { error: err.message, code: err.code })
+    }
+    
+    // Try to use installed Chrome on Render
+    // Puppeteer will auto-detect, but we can also try explicit path
+    const chromePath = process.env.PUPPETEER_EXECUTABLE_PATH
+    if (chromePath) {
+      launchOptions.executablePath = chromePath
+      logger.info('[browserPool] Using custom Chrome executable path', { path: chromePath })
+    }
+    
+    const browser = await puppeteer.launch(launchOptions).catch((err) => {
+      logger.error('[browserPool] Puppeteer launch failed', { 
+        error: err.message, 
+        code: err.code,
+        message: err.message
+      })
+      
+      // If Chrome not found, provide helpful error
+      if (err.message?.includes('Could not find Chrome') || err.message?.includes('Chrome')) {
+        logger.error('[browserPool] Chrome not found. Run: npx puppeteer browsers install chrome', {
+          suggestion: 'Add postinstall script to package.json: "npx puppeteer browsers install chrome"'
+        })
+      }
+      
       throw err
     })
 

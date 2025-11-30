@@ -1187,12 +1187,16 @@ app.post('/api/attendance/datewise', requireAuth, asyncHandler(async (req, res) 
     return res.json(result)
 
   } catch (err) {
+    // Get date from request body (might not be in scope if error occurred early)
+    const requestDate = req.body?.date || 'unknown'
+    
     logger.error('[datewise] Error fetching date-wise attendance', {
       error: err.message,
       stack: err.stack,
       username: req.user?.student_id,
       name: err.name,
-      code: err.code
+      code: err.code,
+      date: requestDate
     })
 
     // Return user-friendly error message
@@ -1202,6 +1206,7 @@ app.post('/api/attendance/datewise', requireAuth, asyncHandler(async (req, res) 
     let statusCode = 500
     if (errorMessage.includes('Browser service unavailable') || 
         errorMessage.includes('Puppeteer cannot launch') ||
+        errorMessage.includes('Could not find Chrome') ||
         errorMessage.includes('timeout') ||
         errorMessage.includes('Scraping timeout')) {
       statusCode = 503
@@ -1213,7 +1218,7 @@ app.post('/api/attendance/datewise', requireAuth, asyncHandler(async (req, res) 
       statusCode,
       errorMessage,
       username: req.user?.student_id,
-      date
+      date: requestDate
     })
 
     return res.status(statusCode).json({

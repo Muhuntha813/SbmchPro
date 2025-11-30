@@ -10,7 +10,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node attendance.js",
-    "server": "node attendance.js"
+    "server": "node attendance.js",
+    "postinstall": "npx puppeteer browsers install chrome || echo 'Chrome installation failed, continuing...'"
   },
   "keywords": [],
   "author": "",

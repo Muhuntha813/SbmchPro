@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: sbmch-attendance-backend
+    env: node
+    plan: free
+    region: oregon
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        fromService:
+          type: web
+          name: sbmch-attendance-backend
+          property: port
+      # Add these in Render dashboard:
+      # - SECRET or JWT_SECRET (required)
+      # - DATABASE_URL (required)
+      # - FRONTEND_URL (optional, for CORS)
+

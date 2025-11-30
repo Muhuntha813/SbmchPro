@@ -40,17 +40,32 @@ npm run lint
 
 ### Backend (Render - Web Service)
 
-- **Build Command**: `npm ci`
-- **Start Command**: `npm run server`
+**Option 1: Using render.yaml (Recommended)**
+- The repository includes a `render.yaml` file
+- Connect your GitHub repo to Render
+- Render will automatically detect and use the configuration
 
-**Env vars to set on Render:**
+**Option 2: Manual Configuration**
+- **Root Directory**: `backend`
+- **Build Command**: `npm install` (or leave empty - backend doesn't need build)
+- **Start Command**: `npm start`
 
-- `SECRET` (min 32 chars)
-- `PORT` (optional, default 3000)
-- `NODE_ENV=production`
-- `FRONTEND_URL` (comma-separated allowed origins)
-- `DATABASE_URL` (if using a managed DB)
-- `SENTRY_DSN` (optional)
+**Required Environment Variables on Render:**
+
+- `SECRET` or `JWT_SECRET` (required, min 32 chars)
+- `DATABASE_URL` (required, PostgreSQL connection string)
+- `NODE_ENV=production` (recommended)
+- `FRONTEND_URL` (optional, comma-separated allowed origins for CORS)
+- `PORT` (optional, Render provides this automatically)
+
+**Optional Environment Variables:**
+
+- `SCRAPER_URL` (optional)
+- `SCRAPER_TIMEOUT_MS` (optional, default: 5000)
+- `SCRAPE_WAIT_MS` (optional, default: 12000)
+- `ADMIN_API_KEY` (optional)
+- `LOG_LEVEL` (optional, default: info)
+- `SUBSCRIPTION_CRON_SCHEDULE` (optional, default: hourly)
 
 ### Frontend (Render - Static Site)
 

@@ -297,12 +297,15 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
   
   // Try common date-wise attendance API endpoints (similar pattern to regular attendance)
   // Regular attendance uses: /user/attendence/subjectgetdaysubattendence
-  // So date-wise might follow similar pattern: /user/attendence/getdatewiseattendence
+  // It sends: date, end_date, subject
+  // For date-wise, it might use the SAME endpoint but with different parameters, or a similar one
   const possibleEndpoints = [
     // Found in page scripts/data (prioritize these)
     ...foundEndpoints.map(e => `${LMS_BASE}${e}`),
-    // Common patterns based on regular attendance endpoint pattern
-    // Pattern: subjectgetdaysubattendence -> getdatewiseattendence
+    // CRITICAL: Try the SAME endpoint as regular attendance first!
+    // It might work with just date/end_date parameters
+    `${LMS_BASE}/user/attendence/subjectgetdaysubattendence`,
+    // Then try date-wise specific variations
     `${LMS_BASE}/user/attendence/getdatewiseattendence`,
     `${LMS_BASE}/user/attendence/getdatewiseattendance`,
     `${LMS_BASE}/user/attendence/datewiseattendence`,
@@ -325,23 +328,35 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
   })
   
   // Build payload with date fields
+  // IMPORTANT: Regular attendance uses 'date' and 'end_date', so try that pattern first
   const payload = new URLSearchParams()
   
-  // Try different field name variations
-  const dateFieldNames = ['dob', 'end_dob', 'date', 'end_date', 'start_date', 'attendance_date']
+  // First, try the same pattern as regular attendance (date, end_date)
+  // Regular attendance API uses: date, end_date, subject
+  payload.set('date', dateToFetch)
+  payload.set('end_date', dateToFetch)
+  logger.info('[datewiseAttendance] Using regular attendance pattern (date, end_date)', { 
+    date: dateToFetch,
+    end_date: dateToFetch 
+  })
+  
+  // Also try to find actual input fields on the page
+  const dateFieldNames = ['dob', 'end_dob', 'date', 'end_date', 'start_date', 'attendance_date', 'attendance_date_from', 'attendance_date_to']
+  let foundPageInputs = false
   for (const fieldName of dateFieldNames) {
     const input = $page(`input[name="${fieldName}"], input#${fieldName}`).first()
     if (input.length > 0) {
-      payload.set(fieldName, dateToFetch)
-      logger.debug('[datewiseAttendance] Added date field to payload', { fieldName, value: dateToFetch })
+      // If we find page inputs, add them (but keep date/end_date as primary)
+      if (fieldName !== 'date' && fieldName !== 'end_date') {
+        payload.set(fieldName, dateToFetch)
+      }
+      foundPageInputs = true
+      logger.info('[datewiseAttendance] Found date input on page', { fieldName, value: dateToFetch })
     }
   }
   
-  // If no date inputs found, use common field names
-  if (payload.toString() === '') {
-    payload.set('dob', dateToFetch)
-    payload.set('end_dob', dateToFetch)
-    logger.warn('[datewiseAttendance] No date inputs found, using default field names')
+  if (!foundPageInputs) {
+    logger.warn('[datewiseAttendance] No date inputs found on page, using API pattern (date, end_date)')
   }
   
   // Get any hidden form fields (CSRF tokens, etc.)
@@ -350,9 +365,14 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
     const value = $page(el).attr('value') || ''
     if (name && !payload.has(name)) {
       payload.set(name, value)
-      logger.debug('[datewiseAttendance] Added hidden field', { name, value })
+      logger.debug('[datewiseAttendance] Added hidden field', { name, value: value.substring(0, 50) })
     }
   })
+  
+  // IMPORTANT: Regular attendance API also sends 'subject' parameter (empty string = all subjects)
+  // For date-wise, we might need to send subject as empty or not send it at all
+  // But let's try without it first, then add it if needed
+  // payload.set('subject', '') // Uncomment if endpoints fail without it
   
   logger.info('[datewiseAttendance] Payload prepared', { 
     payloadString: payload.toString(),

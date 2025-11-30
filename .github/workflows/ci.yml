@@ -1,0 +1,38 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Lint (root/backend/frontend)
+        run: |
+          set -eo pipefail
+          npm run lint
+
+      - name: Run backend tests
+        run: |
+          set -eo pipefail
+          npm test
+        env:
+          SECRET: test-secret-for-testing
+          NODE_ENV: test
+
+      - name: Build frontend
+        run: |
+          set -eo pipefail
+          npm run build
+

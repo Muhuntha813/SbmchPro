@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- Primary Meta Tags -->
+    <title>Sbmch Pro - SBMCH Attendance Tracker</title>
+    <meta name="title" content="Sbmch Pro - SBMCH Attendance Tracker" />
+    <meta name="description" content="Sbmch Pro - Student project for tracking attendance from SBMCH LMS. Track your attendance and view your academic progress." />
+    <meta name="keywords" content="SBMCH, sbmch, sbmch pro, sbmch attendance tracker, attendance tracker, medical college attendance" />
+    <meta name="author" content="Sbmch Pro" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="language" content="English" />
+    <meta name="revisit-after" content="7 days" />
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://sbmch-pro.vercel.app/" />
+    <meta property="og:title" content="Sbmch Pro - SBMCH Attendance Tracker" />
+    <meta property="og:description" content="Student project for tracking attendance from SBMCH LMS. Track attendance and view academic progress." />
+    <meta property="og:site_name" content="Sbmch Pro" />
+    
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content="https://sbmch-pro.vercel.app/" />
+    <meta property="twitter:title" content="Sbmch Pro - SBMCH Attendance Tracker" />
+    <meta property="twitter:description" content="Student project for tracking attendance from SBMCH LMS. Track attendance and view academic progress." />
+    
+    <!-- Additional SEO Meta Tags -->
+    <meta name="application-name" content="Sbmch Pro" />
+    <meta name="apple-mobile-web-app-title" content="Sbmch Pro" />
+    <meta name="theme-color" content="#0f172a" />
+    
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://sbmch-pro.vercel.app/" />
+    <!-- Structured Data (JSON-LD) for SEO -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Sbmch Pro",
+      "alternateName": ["SBMCH Pro", "SBMCH Attendance Tracker"],
+      "description": "Student project for tracking attendance from SBMCH LMS. Track your attendance and view your academic progress.",
+      "url": "https://sbmch-pro.vercel.app/",
+      "applicationCategory": "EducationalApplication",
+      "operatingSystem": "Web",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "INR"
+      },
+      "keywords": "SBMCH, sbmch, sbmch pro, sbmch attendance tracker, attendance tracker, medical college attendance"
+    }
+    </script>
+
+    <!-- Tailwind CSS is now compiled and imported via main.jsx -->
+    <style>
+      /* Theme background and accent variables */
+      html, body { height: 100%; overflow-x: hidden; }
+      body { overscroll-behavior-y: none; }
+      body {
+        --accent-1: #22d3ee;
+        --accent-2: #6366f1;
+        background: linear-gradient(135deg, #0f172a, #1e293b 60%, #0b1020);
+      }
+      /* Base text color per theme for better contrast */
+      body.theme-cool, body.theme-midnight { color: #e5e7eb; }
+      body.theme-daylight { color: #0f172a; }
+
+      body.theme-cool {
+        --accent-1: #22d3ee;
+        --accent-2: #6366f1;
+        background: linear-gradient(135deg, #0f172a, #1e293b 60%, #0b1020) !important;
+      }
+      body.theme-midnight {
+        --accent-1: #8b5cf6;
+        --accent-2: #0ea5e9;
+        background: linear-gradient(135deg, #000000, #0f172a 55%, #1e1b4b) !important;
+      }
+      body.theme-daylight {
+        /* Add a touch of sunset yellow to the palette */
+        --accent-1: #FBBF24; /* amber-400 */
+        --accent-2: #FB923C; /* orange-400 */
+        background: linear-gradient(
+          135deg,
+          #fff7ed,
+          #fef3c7 30%, /* warm, subtle yellow */
+          #e0f2fe 65%,
+          #f8fafc 100%
+        ) !important;
+      }
+
+      /* Daylight Bliss: strengthen contrast of common utility classes */
+      .theme-daylight .text-white\/90 { color: #0f172a !important; }
+      .theme-daylight .text-white\/80 { color: #1f2937 !important; }
+      .theme-daylight .text-white\/70 { color: rgba(15,23,42,0.8) !important; }
+      .theme-daylight .text-white\/60 { color: rgba(15,23,42,0.7) !important; }
+      .theme-daylight .text-gray-200 { color: #334155 !important; }
+      .theme-daylight .bg-white\/10 { background-color: rgba(255,255,255,0.72) !important; }
+      .theme-daylight .border-white\/10 { border-color: rgba(2,6,23,0.12) !important; }
+    </style>
+  </head>
+  <body class="min-h-screen antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+  </html>

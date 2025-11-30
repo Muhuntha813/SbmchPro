@@ -25,7 +25,7 @@ import adminRouter from './routes/admin.js';
 import bcrypt from 'bcryptjs';
 import { scrapeDatewiseAttendance } from './src/services/datewiseAttendanceService.js';
 import { getSharedPool, closePool as closeDbPool } from './src/sharedDb.js';
-import { cleanup as cleanupBrowserPool } from './src/services/browserPool.js';
+// Browser pool no longer needed - datewise attendance now uses HTTP + Cheerio
 
 const app = express();
 
@@ -1160,7 +1160,7 @@ app.post('/api/attendance/datewise', requireAuth, asyncHandler(async (req, res) 
 
     logger.info('[datewise] Fetching date-wise attendance', { username, date })
 
-    // Scrape using Puppeteer with timeout (Render free tier has 30s request timeout)
+    // Scrape using HTTP requests (no Puppeteer needed)
     // Set timeout to 25 seconds to avoid hitting Render's limit
     const SCRAPE_TIMEOUT_MS = 25000 // 25 seconds (Render free tier timeout is ~30s)
     
@@ -1204,14 +1204,10 @@ app.post('/api/attendance/datewise', requireAuth, asyncHandler(async (req, res) 
     
     // Determine status code based on error type
     let statusCode = 500
-    if (errorMessage.includes('Browser service unavailable') || 
-        errorMessage.includes('Puppeteer cannot launch') ||
-        errorMessage.includes('Could not find Chrome') ||
-        errorMessage.includes('timeout') ||
-        errorMessage.includes('Scraping timeout')) {
-      statusCode = 503
-    } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+    if (errorMessage.includes('timeout') || errorMessage.includes('Scraping timeout')) {
       statusCode = 504 // Gateway Timeout
+    } else if (errorMessage.includes('Login failed') || errorMessage.includes('Session invalid')) {
+      statusCode = 401 // Unauthorized
     }
 
     logger.error('[datewise] Returning error response', {
@@ -1259,80 +1255,8 @@ export { app };
 
 // Only start server if not in test environment
 if (process.env.NODE_ENV !== 'test') {
-  // Check if Chrome is available for Puppeteer (non-blocking, for logging only)
-  import('fs').then(async (fsModule) => {
-    try {
-      const { existsSync } = fsModule
-      const { join } = await import('path')
-      
-      // Set cache directory if not set
-      if (!process.env.PUPPETEER_CACHE_DIR) {
-        process.env.PUPPETEER_CACHE_DIR = process.env.HOME 
-          ? `${process.env.HOME}/.cache/puppeteer`
-          : '/opt/render/.cache/puppeteer'
-      }
-      
-      const cacheDir = process.env.PUPPETEER_CACHE_DIR
-      // Check for Chrome in the expected location (Puppeteer v24+)
-      const chromePath = join(cacheDir, 'chrome/linux-142.0.7444.175/chrome-linux64/chrome')
-      const chromeExists = existsSync(chromePath)
-      
-      if (chromeExists) {
-        logger.info('[startup] Puppeteer Chrome found', {
-          executablePath: chromePath,
-          cacheDir: cacheDir
-        })
-      } else {
-        // Try to find any Chrome version
-        try {
-          const { readdirSync, statSync } = fsModule
-          const chromeCacheDir = join(cacheDir, 'chrome')
-          if (existsSync(chromeCacheDir)) {
-            const entries = readdirSync(chromeCacheDir)
-            let found = false
-            for (const entry of entries) {
-              const entryPath = join(chromeCacheDir, entry)
-              const stats = statSync(entryPath)
-              if (stats.isDirectory()) {
-                const testPath = join(entryPath, 'chrome-linux64/chrome')
-                if (existsSync(testPath)) {
-                  logger.info('[startup] Puppeteer Chrome found', {
-                    executablePath: testPath,
-                    cacheDir: cacheDir
-                  })
-                  found = true
-                  break
-                }
-              }
-            }
-            if (!found) {
-              logger.warn('[startup] Puppeteer Chrome not found', {
-                cacheDir: cacheDir,
-                suggestion: 'Chrome should be installed during build. Check build logs.'
-              })
-            }
-          } else {
-            logger.warn('[startup] Puppeteer Chrome cache directory not found', {
-              cacheDir: cacheDir,
-              suggestion: 'Chrome should be installed during build. Check build logs.'
-            })
-          }
-        } catch (scanErr) {
-          logger.warn('[startup] Could not scan for Chrome', { 
-            error: scanErr.message,
-            cacheDir: cacheDir
-          })
-        }
-      }
-    } catch (err) {
-      logger.warn('[startup] Puppeteer Chrome check failed', {
-        error: err.message,
-        cacheDir: process.env.PUPPETEER_CACHE_DIR || 'not set'
-      })
-    }
-  }).catch((e) => {
-    logger.warn('[startup] Could not check Puppeteer Chrome', { error: e.message })
-  })
+  // Note: Puppeteer no longer needed - datewise attendance uses HTTP + Cheerio
+  logger.info('[startup] Date-wise attendance now uses HTTP requests (no Puppeteer required)')
   
   // Ensure DB schema on boot (non-blocking)
   ensureSchema().catch((e) => logger.error('ensureSchema boot error', { error: e.message }));
@@ -1390,7 +1314,6 @@ if (process.env.NODE_ENV !== 'test') {
   const shutdown = async (signal) => {
     logger.info(`Received ${signal}, shutting down gracefully...`);
     try {
-      await cleanupBrowserPool();
       await closeDbPool();
       logger.info('Graceful shutdown complete');
       process.exit(0);

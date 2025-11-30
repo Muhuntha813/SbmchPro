@@ -1,268 +1,248 @@
 import logger from '../../lib/logger.js'
-import { withBrowser } from './browserPool.js'
-import puppeteer from 'puppeteer'
-import { existsSync, readdirSync, statSync } from 'fs'
-import { join } from 'path'
+import fetch from 'node-fetch'
+import { CookieJar } from 'tough-cookie'
+import fetchCookie from 'fetch-cookie'
+import * as cheerio from 'cheerio'
 
-const LOGIN_URL = 'https://sbmchlms.com/lms/site/userlogin'
-const ATT_PAGE = 'https://sbmchlms.com/lms/user/attendence'
+const LMS_BASE = 'https://sbmchlms.com/lms'
+const LOGIN_URL = `${LMS_BASE}/site/userlogin`
+const ATT_PAGE = `${LMS_BASE}/user/attendence`
+const ORIGIN = 'https://sbmchlms.com'
 
-const sleep = ms => new Promise(res => setTimeout(res, ms))
-
-/**
- * Find Chrome executable path (same logic as browserPool)
- */
-function findChromeExecutable() {
-  // Check environment variable first
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    if (existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
-      return process.env.PUPPETEER_EXECUTABLE_PATH
-    }
-  }
-  
-  // Common Puppeteer cache locations (Puppeteer v24+ installs to specific subdirectories)
-  const cacheDir = process.env.PUPPETEER_CACHE_DIR || 
-                   join(process.env.HOME || '/opt/render', '.cache/puppeteer')
-  
-  const possiblePaths = [
-    // Puppeteer v24+ default installation path (from build logs)
-    join(cacheDir, 'chrome/linux-142.0.7444.175/chrome-linux64/chrome'),
-    // Legacy paths
-    join(cacheDir, 'chrome/chrome-linux64/chrome'),
-    join(cacheDir, 'chrome/chrome'),
-    join(cacheDir, 'chrome'),
-    // System Chrome
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-  ]
-  
-  // Try to find Chrome in common locations
-  for (const chromePath of possiblePaths) {
-    if (existsSync(chromePath)) {
-      logger.info('[datewiseAttendance] Found Chrome at', { path: chromePath })
-      return chromePath
-    }
-  }
-  
-  // Try to find Chrome by scanning the cache directory
-  try {
-    const chromeCacheDir = join(cacheDir, 'chrome')
-    if (existsSync(chromeCacheDir)) {
-      const entries = readdirSync(chromeCacheDir)
-      for (const entry of entries) {
-        const entryPath = join(chromeCacheDir, entry)
-        const stats = statSync(entryPath)
-        if (stats.isDirectory()) {
-          const chromeLinuxPath = join(entryPath, 'chrome-linux64/chrome')
-          if (existsSync(chromeLinuxPath)) {
-            logger.info('[datewiseAttendance] Found Chrome by scanning cache', { path: chromeLinuxPath })
-            return chromeLinuxPath
-          }
-        }
-      }
-    }
-  } catch (e) {
-    logger.debug('[datewiseAttendance] Error scanning cache directory', { error: e.message })
-  }
-  
-  return null
+const DEFAULT_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Cache-Control': 'no-cache'
 }
 
-// Note: Chrome should be installed during build via postinstall script
-// Runtime installation is not supported in Puppeteer v24+ without createBrowserFetcher
+function withDefaultHeaders(headers = {}) {
+  return { ...DEFAULT_HEADERS, ...headers }
+}
+
+function cleanText(value) {
+  return (value || '').replace(/\s+/g, ' ').trim()
+}
 
 /**
- * Fallback: Direct Puppeteer launch (original method before pooling)
- * Used when browser pool fails
+ * Login to LMS using fetch and cookies (similar to scraperService)
  */
-async function scrapeWithDirectPuppeteer({ username, password, dateToFetch }) {
-  let browser = null
-  
+async function loginToLms({ username, password }) {
+  logger.info('[datewiseAttendance] Starting LMS login', { username })
+  const jar = new CookieJar()
+  const fetchWithCookies = fetchCookie(fetch, jar)
+  const client = (url, options = {}) => {
+    const headers = withDefaultHeaders(options.headers)
+    return fetchWithCookies(url, { ...options, headers })
+  }
+
+  let loginPage
   try {
-    logger.info('[datewiseAttendance] Using direct Puppeteer (fallback)', { username, dateToFetch })
-    
-    // Find Chrome executable (should be installed during build)
-    const chromePath = findChromeExecutable()
-    
-    if (!chromePath) {
-      logger.warn('[datewiseAttendance] Chrome executable not found', {
-        suggestion: 'Chrome should be installed during build. Check build logs for installation errors.',
-        cacheDir: process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer'
-      })
+    loginPage = await client(LOGIN_URL, { method: 'GET' })
+    if (!loginPage.ok) {
+      throw new Error(`Login page request failed (${loginPage.status})`)
     }
-    
-    const launchOptions = {
-      headless: 'new',
-      defaultViewport: { width: 1280, height: 900 },
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
-        '--single-process', // Critical for Render free tier memory limits
-        '--memory-pressure-off'
-      ],
-      protocolTimeout: 18000 // Match page timeout
-    }
-    
-    // Use found Chrome path
-    if (chromePath) {
-      launchOptions.executablePath = chromePath
-      logger.info('[datewiseAttendance] Using Chrome executable path', { path: chromePath })
-    } else {
-      logger.warn('[datewiseAttendance] Chrome executable not found, Puppeteer will try to auto-detect')
-    }
-    
-    browser = await puppeteer.launch(launchOptions).catch((err) => {
-      logger.error('[datewiseAttendance] Puppeteer launch failed in fallback', {
-        error: err.message,
+  } catch (err) {
+    if (err.code === 'ENOTFOUND' || err.code === 'EAI_AGAIN' || err.code === 'ECONNREFUSED') {
+      logger.error('[datewiseAttendance] LMS host not reachable', { 
+        username, 
+        error: err.message, 
         code: err.code,
-        chromePath: chromePath || 'not set',
-        suggestion: 'Chrome installation may have failed. Check build logs and ensure PUPPETEER_CACHE_DIR is set correctly.'
+        host: LOGIN_URL 
       })
-      throw err
-    })
-
-    const page = await browser.newPage()
-    // Reduced timeout for Render free tier (30s request limit)
-    page.setDefaultTimeout(18000)
-
-    logger.info('[datewiseAttendance] Opening login page')
-    await page.goto(LOGIN_URL, { waitUntil: 'networkidle2' })
-
-    // Login
-    await page.waitForSelector('input[name="username"], input#username', { timeout: 10000 })
-    await page.type('input[name="username"], input#username', username, { delay: 25 })
-    await page.type('input[name="password"], input#password', password, { delay: 25 })
-
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle2' }),
-      page.click('button[type="submit"], input[type="submit"], button.login, .login-btn')
-    ])
-
-    // Quick dashboard check
-    const loggedIn = await page.evaluate(() => {
-      return !!(document.querySelector('header .user-name') ||
-                document.querySelector('h4.mt0') ||
-                document.querySelector('.dashboard'))
-    })
-
-    if (!loggedIn) {
-      logger.warn('[datewiseAttendance] Login may have failed (dashboard marker not found)')
-    } else {
-      logger.info('[datewiseAttendance] Login successful')
+      throw new Error(`LMS host not reachable: ${err.message}`)
     }
+    throw err
+  }
+  
+  const loginHtml = await loginPage.text()
+  const $login = cheerio.load(loginHtml)
+  const hiddenInputs = {}
+  $login('input[type="hidden"]').each((_, el) => {
+    const name = $login(el).attr('name')
+    if (!name) return
+    hiddenInputs[name] = $login(el).attr('value') ?? ''
+  })
 
-    // Navigate to attendance page
-    logger.info('[datewiseAttendance] Navigating to attendance page')
-    await page.goto(ATT_PAGE, { waitUntil: 'networkidle2' })
-    await sleep(600)
+  const form = new URLSearchParams()
+  form.set('username', username)
+  form.set('password', password)
+  Object.entries(hiddenInputs).forEach(([key, value]) => form.append(key, value ?? ''))
 
-    // Helper to set a date input safely
-    const setDateIfExists = async (selector, value) => {
-      const el = await page.$(selector)
-      if (!el) return false
+  const loginResponse = await client(LOGIN_URL, {
+    method: 'POST',
+    body: form,
+    headers: withDefaultHeaders({
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Origin: ORIGIN,
+      Referer: LOGIN_URL
+    }),
+    redirect: 'manual'
+  })
 
-      await page.click(selector, { clickCount: 3 }).catch(() => {})
-      await page.keyboard.down('Control').catch(() => {})
-      await page.keyboard.press('KeyA').catch(() => {})
-      await page.keyboard.up('Control').catch(() => {})
-      await page.keyboard.press('Backspace').catch(() => {})
-      await page.type(selector, value, { delay: 20 })
-      await page.$eval(selector, node => {
-        node.dispatchEvent(new Event('input', { bubbles: true }))
-        node.dispatchEvent(new Event('change', { bubbles: true }))
-      })
-      return true
+  if ([301, 302, 303].includes(loginResponse.status)) {
+    const location = loginResponse.headers.get('location')
+    if (location) {
+      const destination = new URL(location, LOGIN_URL).toString()
+      await client(destination, { method: 'GET' })
     }
+  } else {
+    const body = await loginResponse.text()
+    if (!loginResponse.ok || /invalid username|password/i.test(body)) {
+      logger.error('[datewiseAttendance] LMS login rejected credentials', { username, status: loginResponse.status })
+      throw new Error('Login failed: the LMS rejected the credentials or returned an unexpected response.')
+    }
+  }
 
-    await setDateIfExists('#dob', dateToFetch)
-    await setDateIfExists('#end_dob', dateToFetch)
+  logger.info('[datewiseAttendance] LMS login successful', { username })
+  return { client }
+}
 
-    const clickedSearch = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'))
-      for (const b of buttons) {
-        const txt = (b.innerText || b.value || '').toLowerCase().trim()
-        if (!txt) continue
-        if (txt.includes('search') || txt.includes('submit') || txt.includes('go') || txt.includes('filter')) {
-          b.click()
-          return true
+/**
+ * Parse attendance rows from HTML
+ */
+function parseDatewiseAttendanceRows(html) {
+  if (!html) return []
+  const $ = cheerio.load(html)
+  const rows = []
+  
+  const resultBox = $('.attendance_result')
+  const table = resultBox.length ? resultBox.find('table') : $('table')
+  
+  if (!table.length) {
+    logger.warn('[datewiseAttendance] No attendance table found in result page')
+    return []
+  }
+  
+  table.find('tbody tr').each((_, tr) => {
+    const $tr = $(tr)
+    const tds = $tr.find('td')
+    if (tds.length < 4) return
+    
+    const subject = cleanText($(tds[0]).text())
+    const time_from = cleanText($(tds[1]).text())
+    const time_to = cleanText($(tds[2]).text())
+    const attendance = cleanText($(tds[3]).text())
+    
+    rows.push({
+      subject,
+      time_from,
+      time_to,
+      attendance
+    })
+  })
+  
+  return rows
+}
+
+/**
+ * Fetch date-wise attendance using HTTP requests
+ */
+async function fetchDatewiseAttendance(client, { dateToFetch }) {
+  logger.info('[datewiseAttendance] Fetching attendance page', { dateToFetch })
+  
+  // First, visit the attendance page to get the form
+  const attendancePageResponse = await client(ATT_PAGE, { method: 'GET' })
+  if (!attendancePageResponse.ok) {
+    throw new Error(`Attendance page request failed (${attendancePageResponse.status})`)
+  }
+  
+  const attendancePageHtml = await attendancePageResponse.text()
+  const $page = cheerio.load(attendancePageHtml)
+  
+  // Check if we're still logged in
+  if (/Student Login/i.test(attendancePageHtml) && /Username/i.test(attendancePageHtml)) {
+    throw new Error('Session invalid – attendance page returned login page.')
+  }
+  
+  // Try to find the form and submit it with the date
+  // Look for form action or try to submit via API endpoint
+  // First, try to find if there's an API endpoint for date-wise attendance
+  const form = $page('form')
+  let formAction = form.attr('action') || ''
+  
+  // If no form action, try common API patterns
+  if (!formAction || formAction === '#') {
+    // Try common date-wise attendance API endpoints
+    const possibleEndpoints = [
+      `${LMS_BASE}/user/attendence/getdatewiseattendence`,
+      `${LMS_BASE}/user/attendence/getdatewiseattendance`,
+      `${LMS_BASE}/user/attendence/datewise`,
+      `${LMS_BASE}/user/attendence/submit`,
+      ATT_PAGE // Fallback to same page
+    ]
+    
+    // Try submitting to the attendance page with form data
+    const payload = new URLSearchParams()
+    payload.set('dob', dateToFetch)
+    payload.set('end_dob', dateToFetch)
+    
+    // Get any hidden form fields
+    $page('input[type="hidden"]').each((_, el) => {
+      const name = $page(el).attr('name')
+      const value = $page(el).attr('value') || ''
+      if (name) {
+        payload.set(name, value)
+      }
+    })
+    
+    // Try submitting to the attendance page
+    const submitResponse = await client(ATT_PAGE, {
+      method: 'POST',
+      headers: withDefaultHeaders({
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Referer: ATT_PAGE,
+        Origin: ORIGIN
+      }),
+      body: payload
+    })
+    
+    if (!submitResponse.ok) {
+      throw new Error(`Date-wise attendance request failed (${submitResponse.status})`)
+    }
+    
+    const resultHtml = await submitResponse.text()
+    const rows = parseDatewiseAttendanceRows(resultHtml)
+    
+    return rows
+  } else {
+    // Use the form action
+    const formUrl = new URL(formAction, ATT_PAGE).toString()
+    const payload = new URLSearchParams()
+    payload.set('dob', dateToFetch)
+    payload.set('end_dob', dateToFetch)
+    
+    // Get all form fields
+    $page('form input').each((_, el) => {
+      const name = $page(el).attr('name')
+      const type = $page(el).attr('type')
+      const value = $page(el).attr('value') || ''
+      
+      if (name && type !== 'submit' && type !== 'button') {
+        if (type === 'hidden' || name === 'dob' || name === 'end_dob') {
+          payload.set(name, value || (name.includes('dob') ? dateToFetch : value))
         }
       }
-      return false
     })
-
-    if (clickedSearch) {
-      logger.info('[datewiseAttendance] Clicked search/filter button')
-    }
-
-    // Wait for results
-    try {
-      await page.waitForFunction(() => {
-        const box = document.querySelector('.attendance_result')
-        if (!box) return false
-        const table = box.querySelector('table')
-        if (!table) return false
-        return table.querySelectorAll('tbody td').length > 0
-      }, { timeout: 20000 })
-      logger.info('[datewiseAttendance] Attendance table appeared')
-    } catch (e) {
-      logger.warn('[datewiseAttendance] Timed out waiting for table rows — table may be empty')
-    }
-
-    // Scrape rows
-    const rows = await page.evaluate(() => {
-      const out = []
-      const box = document.querySelector('.attendance_result')
-      if (!box) return out
-      const table = box.querySelector('table')
-      if (!table) return out
-      const trs = Array.from(table.querySelectorAll('tbody tr'))
-      for (const tr of trs) {
-        const tds = Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim())
-        if (!tds.length) continue
-        out.push({
-          subject: tds[0] || '',
-          time_from: tds[1] || '',
-          time_to: tds[2] || '',
-          attendance: tds[3] || ''
-        })
-      }
-      return out
+    
+    const submitResponse = await client(formUrl, {
+      method: 'POST',
+      headers: withDefaultHeaders({
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Referer: ATT_PAGE,
+        Origin: ORIGIN
+      }),
+      body: payload
     })
-
-    const result = {
-      source: ATT_PAGE,
-      date_used: dateToFetch,
-      rows
+    
+    if (!submitResponse.ok) {
+      throw new Error(`Date-wise attendance form submission failed (${submitResponse.status})`)
     }
-
-    logger.info('[datewiseAttendance] Scrape completed (direct)', {
-      rowCount: rows.length,
-      dateUsed: dateToFetch
-    })
-
-    setCache(username, dateToFetch, result)
-    return result
-
-  } catch (err) {
-    logger.error('[datewiseAttendance] Direct Puppeteer error', {
-      error: err.message,
-      code: err.code,
-      username,
-      dateToFetch
-    })
-    throw err
-  } finally {
-    if (browser) {
-      try {
-        await browser.close()
-      } catch (e) {
-        logger.warn('[datewiseAttendance] Error closing browser', { error: e.message })
-      }
-    }
+    
+    const resultHtml = await submitResponse.text()
+    const rows = parseDatewiseAttendanceRows(resultHtml)
+    
+    return rows
   }
 }
 
@@ -314,8 +294,7 @@ function setCache(username, dateToFetch, data) {
 }
 
 /**
- * Scrapes date-wise attendance from SBMCH LMS using Puppeteer
- * Uses browser pool to reduce RAM usage
+ * Scrapes date-wise attendance from SBMCH LMS using HTTP requests and Cheerio
  * @param {string} username - Student ID
  * @param {string} password - Password
  * @param {string} dateToFetch - Date in DD-MM-YYYY format
@@ -330,215 +309,37 @@ export async function scrapeDatewiseAttendance({ username, password, dateToFetch
 
   logger.info('[datewiseAttendance] Starting scrape', { username, dateToFetch })
 
-  // Try browser pool first (optimized), fallback to direct Puppeteer if it fails
   try {
-    return await withBrowser(async (browserInfo) => {
-      if (!browserInfo || !browserInfo.browser) {
-        throw new Error('Browser not available from pool')
-      }
-      
-      const { browser } = browserInfo
-      let page = null
-
-      try {
-      page = await browser.newPage()
-      // Reduced timeout for Render free tier (30s request limit)
-      // Set page timeout to 18s to leave buffer for other operations
-      page.setDefaultTimeout(18000)
-
-      logger.info('[datewiseAttendance] Opening login page')
-      await page.goto(LOGIN_URL, { waitUntil: 'networkidle2' })
-
-      // Login
-      await page.waitForSelector('input[name="username"], input#username', { timeout: 10000 })
-      await page.type('input[name="username"], input#username', username, { delay: 25 })
-      await page.type('input[name="password"], input#password', password, { delay: 25 })
-
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle2' }),
-        page.click('button[type="submit"], input[type="submit"], button.login, .login-btn')
-      ])
-
-      // Quick dashboard check
-      const loggedIn = await page.evaluate(() => {
-        return !!(document.querySelector('header .user-name') ||
-                  document.querySelector('h4.mt0') ||
-                  document.querySelector('.dashboard'))
-      })
-
-      if (!loggedIn) {
-        logger.warn('[datewiseAttendance] Login may have failed (dashboard marker not found)')
-      } else {
-        logger.info('[datewiseAttendance] Login successful')
-      }
-
-      // Navigate to attendance page
-      logger.info('[datewiseAttendance] Navigating to attendance page')
-      await page.goto(ATT_PAGE, { waitUntil: 'networkidle2' })
-      await sleep(600) // Let page JS initialize
-
-      // Helper to set a date input safely
-      const setDateIfExists = async (selector, value) => {
-        const el = await page.$(selector)
-        if (!el) return false
-
-        await page.click(selector, { clickCount: 3 }).catch(() => {})
-        
-        // Clear
-        await page.keyboard.down('Control').catch(() => {})
-        await page.keyboard.press('KeyA').catch(() => {})
-        await page.keyboard.up('Control').catch(() => {})
-        await page.keyboard.press('Backspace').catch(() => {})
-
-        // Type new value
-        await page.type(selector, value, { delay: 20 })
-
-        // Dispatch events so site scripts detect change
-        await page.$eval(selector, node => {
-          node.dispatchEvent(new Event('input', { bubbles: true }))
-          node.dispatchEvent(new Event('change', { bubbles: true }))
-        })
-
-        return true
-      }
-
-      // Attempt to set both possible fields
-      await setDateIfExists('#dob', dateToFetch)
-      await setDateIfExists('#end_dob', dateToFetch)
-
-      // Click a "Search" button if present
-      const clickedSearch = await page.evaluate(() => {
-        const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'))
-        for (const b of buttons) {
-          const txt = (b.innerText || b.value || '').toLowerCase().trim()
-          if (!txt) continue
-          if (txt.includes('search') || txt.includes('submit') || txt.includes('go') || txt.includes('filter')) {
-            b.click()
-            return true
-          }
-        }
-        return false
-      })
-
-      if (clickedSearch) {
-        logger.info('[datewiseAttendance] Clicked search/filter button')
-      } else {
-        logger.info('[datewiseAttendance] No search button clicked; relying on input events')
-      }
-
-      // Wait for results container/table
-      try {
-        await page.waitForFunction(() => {
-          const box = document.querySelector('.attendance_result')
-          if (!box) return false
-          const table = box.querySelector('table')
-          if (!table) return false
-          return table.querySelectorAll('tbody td').length > 0
-        }, { timeout: 20000 })
-
-        logger.info('[datewiseAttendance] Attendance table appeared')
-      } catch (e) {
-        logger.warn('[datewiseAttendance] Timed out waiting for table rows — table may be empty')
-      }
-
-      // Scrape rows
-      const rows = await page.evaluate(() => {
-        const out = []
-        const box = document.querySelector('.attendance_result')
-        if (!box) return out
-
-        const table = box.querySelector('table')
-        if (!table) return out
-
-        const trs = Array.from(table.querySelectorAll('tbody tr'))
-        for (const tr of trs) {
-          const tds = Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim())
-          if (!tds.length) continue
-
-          const subject = tds[0] || ''
-          const time_from = tds[1] || ''
-          const time_to = tds[2] || ''
-          const attendance = tds[3] || ''
-
-          out.push({ subject, time_from, time_to, attendance })
-        }
-
-        return out
-      })
-
-      const result = { 
-        source: ATT_PAGE, 
-        date_used: dateToFetch, 
-        rows 
-      }
-
-      logger.info('[datewiseAttendance] Scrape completed', {
-        rowCount: rows.length,
-        dateUsed: dateToFetch,
-      })
-
-      // Cache the result
-      setCache(username, dateToFetch, result)
-
-      return result
-    } catch (err) {
-      logger.error('[datewiseAttendance] Error during scrape', {
-        error: err.message,
-        stack: err.stack,
-        username,
-        dateToFetch,
-      })
-      throw err
-      } finally {
-        // Close page, but keep browser in pool
-        if (page) {
-          try {
-            await page.close()
-          } catch (e) {
-            logger.warn('[datewiseAttendance] Error closing page', { error: e.message })
-          }
-      }
+    // Login to LMS
+    const { client } = await loginToLms({ username, password })
+    
+    // Fetch date-wise attendance
+    logger.info('[datewiseAttendance] Fetching date-wise attendance', { username, dateToFetch })
+    const rows = await fetchDatewiseAttendance(client, { dateToFetch })
+    
+    const result = {
+      source: ATT_PAGE,
+      date_used: dateToFetch,
+      rows
     }
+
+    logger.info('[datewiseAttendance] Scrape completed', {
+      rowCount: rows.length,
+      dateUsed: dateToFetch,
+      username
     })
+
+    // Cache the result
+    setCache(username, dateToFetch, result)
+
+    return result
   } catch (err) {
-    // Handle browser pool errors - try fallback to direct Puppeteer
-    const errorMsg = err.message || String(err) || 'Unknown error'
-    
-    // Check for browser unavailable errors - try fallback
-    if (errorMsg.includes('Browser not available') || 
-        errorMsg.includes('ECONNRESET') || 
-        errorMsg.includes('read ECONNRESET') ||
-        errorMsg.includes('Browser service unavailable') ||
-        errorMsg.includes('Puppeteer cannot launch')) {
-      logger.warn('[datewiseAttendance] Browser pool failed, trying direct Puppeteer fallback', {
-        error: errorMsg,
-        code: err.code,
-        username,
-        dateToFetch
-      })
-      
-      // Try direct Puppeteer as fallback (original method)
-      try {
-        return await scrapeWithDirectPuppeteer({ username, password, dateToFetch })
-      } catch (fallbackErr) {
-        logger.error('[datewiseAttendance] Both browser pool and direct Puppeteer failed', {
-          poolError: errorMsg,
-          fallbackError: fallbackErr.message,
-          code: fallbackErr.code,
-          username,
-          dateToFetch
-        })
-        throw new Error('Browser service unavailable. Puppeteer cannot launch Chrome. Please check Windows Defender/firewall settings or install Chrome manually.')
-      }
-    }
-    
-    // Re-throw other errors with more context
-    logger.error('[datewiseAttendance] Unexpected error', {
-      error: errorMsg,
-      code: err.code,
+    logger.error('[datewiseAttendance] Error during scrape', {
+      error: err.message,
       stack: err.stack,
       username,
-      dateToFetch
+      dateToFetch,
+      code: err.code
     })
     throw err
   }

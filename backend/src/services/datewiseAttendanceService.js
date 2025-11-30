@@ -237,34 +237,61 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
   // Many LMS systems use AJAX endpoints for date-wise attendance
   let apiEndpoint = null
   
-  // Look for common API endpoint patterns in the page
+  // Look for common API endpoint patterns in the page (check script tags, data attributes, etc.)
   const pageText = attendancePageHtml
-  const apiPatterns = [
-    /\/user\/attendence\/[^"'\s]*date[^"'\s]*/gi,
-    /\/user\/attendence\/[^"'\s]*get[^"'\s]*/gi,
-    /\/user\/attendence\/[^"'\s]*ajax[^"'\s]*/gi
-  ]
   
-  for (const pattern of apiPatterns) {
-    const matches = pageText.match(pattern)
-    if (matches && matches.length > 0) {
-      apiEndpoint = matches[0]
-      logger.info('[datewiseAttendance] Found potential API endpoint in page', { endpoint: apiEndpoint })
-      break
+  // Look for endpoints in script tags (JavaScript code)
+  const scriptTags = $page('script').toArray()
+  let foundEndpoints = []
+  
+  for (const script of scriptTags) {
+    const scriptContent = $page(script).html() || ''
+    // Look for URL patterns in JavaScript
+    const urlPatterns = [
+      /['"`](\/user\/attendence\/[^'"`\s]+)['"`]/gi,
+      /url\s*[:=]\s*['"`](\/user\/attendence\/[^'"`\s]+)['"`]/gi,
+      /ajax\s*\([^)]*['"`](\/user\/attendence\/[^'"`\s]+)['"`]/gi
+    ]
+    
+    for (const pattern of urlPatterns) {
+      let match
+      while ((match = pattern.exec(scriptContent)) !== null) {
+        if (match[1] && !foundEndpoints.includes(match[1])) {
+          foundEndpoints.push(match[1])
+          logger.info('[datewiseAttendance] Found endpoint in script', { endpoint: match[1] })
+        }
+      }
     }
   }
   
-  // Try common date-wise attendance API endpoints
+  // Also check data attributes and form actions
+  $page('[data-url], [data-action], [data-endpoint]').each((_, el) => {
+    const url = $page(el).attr('data-url') || $page(el).attr('data-action') || $page(el).attr('data-endpoint')
+    if (url && url.startsWith('/user/attendence/') && !foundEndpoints.includes(url)) {
+      foundEndpoints.push(url)
+      logger.info('[datewiseAttendance] Found endpoint in data attribute', { endpoint: url })
+    }
+  })
+  
+  // Try common date-wise attendance API endpoints (similar pattern to regular attendance)
+  // Regular attendance uses: /user/attendence/subjectgetdaysubattendence
+  // So date-wise might be: /user/attendence/getdatewiseattendence or similar
   const possibleEndpoints = [
+    // Found in page scripts/data
+    ...foundEndpoints.map(e => `${LMS_BASE}${e}`),
+    // Common patterns based on regular attendance endpoint
     `${LMS_BASE}/user/attendence/getdatewiseattendence`,
     `${LMS_BASE}/user/attendence/getdatewiseattendance`,
     `${LMS_BASE}/user/attendence/datewiseattendence`,
     `${LMS_BASE}/user/attendence/datewiseattendance`,
     `${LMS_BASE}/user/attendence/getattendencebydate`,
     `${LMS_BASE}/user/attendence/getattendancebydate`,
+    `${LMS_BASE}/user/attendence/getdateattendence`,
+    `${LMS_BASE}/user/attendence/getdateattendance`,
     `${LMS_BASE}/user/attendence/ajax`,
-    apiEndpoint ? `${LMS_BASE}${apiEndpoint}` : null
-  ].filter(Boolean)
+    // Try the same page with POST (might handle it server-side)
+    ATT_PAGE
+  ].filter((v, i, a) => a.indexOf(v) === i) // Remove duplicates
   
   // Build payload with date fields
   const payload = new URLSearchParams()

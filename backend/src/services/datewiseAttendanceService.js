@@ -164,14 +164,44 @@ function parseDatewiseAttendanceRows(html) {
   }
   
   // Find all rows in tbody (or all tr if no tbody)
+  // IMPORTANT: Regular attendance uses table.find('tbody tr') - be consistent
   const tbody = table.find('tbody')
-  const trs = tbody.length > 0 ? tbody.find('tr') : table.find('tr')
+  let trs = null
   
-  logger.info('[datewiseAttendance] Found table rows', { 
-    rowCount: trs.length,
-    hasTbody: tbody.length > 0,
-    tableHtml: table.html()?.substring(0, 500)
-  })
+  if (tbody.length > 0) {
+    trs = tbody.find('tr')
+    logger.info('[datewiseAttendance] Found table rows in tbody', { 
+      rowCount: trs.length,
+      hasTbody: true
+    })
+  } else {
+    // No tbody, get all tr elements (skip header row if it's thead)
+    const thead = table.find('thead')
+    if (thead.length > 0) {
+      // Skip thead rows, get only tbody rows (even if no tbody tag)
+      trs = table.find('tr').not(thead.find('tr'))
+    } else {
+      trs = table.find('tr')
+    }
+    logger.info('[datewiseAttendance] Found table rows (no tbody)', { 
+      rowCount: trs.length,
+      hasTbody: false,
+      hasThead: thead.length > 0
+    })
+  }
+  
+  if (!trs || trs.length === 0) {
+    logger.error('[datewiseAttendance] No table rows found', {
+      tableHtml: table.html()?.substring(0, 1000),
+      hasTbody: tbody.length > 0,
+      tableStructure: {
+        hasThead: table.find('thead').length > 0,
+        hasTbody: table.find('tbody').length > 0,
+        allTrs: table.find('tr').length
+      }
+    })
+    return []
+  }
   
   trs.each((_, tr) => {
     const $tr = $(tr)
@@ -522,29 +552,57 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
       // Try to parse as JSON first (common for AJAX endpoints)
       const contentType = response.headers.get('content-type') || ''
       let resultHtml = ''
+      let jsonResponse = null
       
-      if (contentType.includes('application/json')) {
-        const json = await response.json()
-        logger.info('[datewiseAttendance] Received JSON response', { 
+      // Always try JSON first (regular attendance API returns JSON)
+      try {
+        const text = await response.text()
+        // Try to parse as JSON
+        try {
+          jsonResponse = JSON.parse(text)
+          logger.info('[datewiseAttendance] Received JSON response', { 
+            endpoint,
+            hasResultPage: !!jsonResponse.result_page,
+            hasHtml: !!jsonResponse.html,
+            hasData: !!jsonResponse.data,
+            status: jsonResponse.status,
+            jsonKeys: Object.keys(jsonResponse),
+            jsonPreview: JSON.stringify(jsonResponse).substring(0, 500)
+          })
+        } catch (parseErr) {
+          // Not JSON, treat as HTML
+          resultHtml = text
+          logger.info('[datewiseAttendance] Received HTML response (not JSON)', {
+            endpoint,
+            htmlLength: resultHtml.length,
+            hasAttendanceResult: resultHtml.includes('attendance_result'),
+            hasTable: resultHtml.includes('<table')
+          })
+        }
+      } catch (textErr) {
+        logger.error('[datewiseAttendance] Failed to read response text', {
           endpoint,
-          hasResultPage: !!json.result_page,
-          hasHtml: !!json.html,
-          hasData: !!json.data,
-          status: json.status,
-          jsonKeys: Object.keys(json)
+          error: textErr.message
         })
-        
-        // Some APIs return HTML in a JSON field
-        if (json.result_page) {
-          resultHtml = json.result_page
-        } else if (json.html) {
-          resultHtml = json.html
-        } else if (json.data) {
-          resultHtml = typeof json.data === 'string' ? json.data : JSON.stringify(json.data)
+        continue
+      }
+      
+      // Handle JSON response (like regular attendance API)
+      if (jsonResponse) {
+        // Some APIs return HTML in a JSON field (like regular attendance)
+        if (jsonResponse.result_page) {
+          resultHtml = jsonResponse.result_page
+          logger.info('[datewiseAttendance] Extracted result_page from JSON', {
+            htmlLength: resultHtml.length
+          })
+        } else if (jsonResponse.html) {
+          resultHtml = jsonResponse.html
+        } else if (jsonResponse.data) {
+          resultHtml = typeof jsonResponse.data === 'string' ? jsonResponse.data : JSON.stringify(jsonResponse.data)
         } else {
           // If JSON doesn't have HTML, try to extract data directly
-          if (json.rows || json.data) {
-            const rows = json.rows || json.data || []
+          if (jsonResponse.rows || jsonResponse.data) {
+            const rows = jsonResponse.rows || jsonResponse.data || []
             if (Array.isArray(rows) && rows.length > 0) {
               logger.info('[datewiseAttendance] Found rows in JSON response', { 
                 endpoint, 
@@ -553,18 +611,34 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
               return rows
             }
           }
+          // If status is not '1', still try to parse result_page if it exists
+          if (jsonResponse.status !== '1' && jsonResponse.result_page) {
+            resultHtml = jsonResponse.result_page
+          } else {
+            logger.warn('[datewiseAttendance] JSON response has no parseable data', {
+              endpoint,
+              jsonKeys: Object.keys(jsonResponse),
+              status: jsonResponse.status
+            })
+            continue
+          }
         }
-      } else {
-        resultHtml = await response.text()
-        logger.info('[datewiseAttendance] Received HTML response', {
-          endpoint,
-          htmlLength: resultHtml.length,
-          hasAttendanceResult: resultHtml.includes('attendance_result'),
-          hasTable: resultHtml.includes('<table')
-        })
       }
       
-      // Parse HTML response
+      // Parse HTML response (from JSON or direct HTML)
+      if (!resultHtml) {
+        logger.warn('[datewiseAttendance] No HTML to parse', { endpoint })
+        continue
+      }
+      
+      logger.info('[datewiseAttendance] Parsing HTML from response', {
+        endpoint,
+        htmlLength: resultHtml.length,
+        hasAttendanceResult: resultHtml.includes('attendance_result'),
+        hasTable: resultHtml.includes('<table'),
+        htmlPreview: resultHtml.substring(0, 1000)
+      })
+      
       const rows = parseDatewiseAttendanceRows(resultHtml)
       
       if (rows.length > 0) {
@@ -574,11 +648,12 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
         })
         return rows
       } else {
-        logger.warn('[datewiseAttendance] No rows found in endpoint response', { 
+        logger.warn('[datewiseAttendance] No rows found in endpoint response after parsing', { 
           endpoint,
           htmlLength: resultHtml.length,
           hasAttendanceResult: resultHtml.includes('attendance_result'),
-          htmlPreview: resultHtml.substring(0, 1000)
+          hasTable: resultHtml.includes('<table'),
+          htmlPreview: resultHtml.substring(0, 2000)
         })
       }
     } catch (err) {

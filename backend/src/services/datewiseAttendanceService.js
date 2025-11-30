@@ -25,12 +25,16 @@ async function scrapeWithDirectPuppeteer({ username, password, dateToFetch }) {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas',
-        '--disable-gpu'
-      ]
+        '--disable-gpu',
+        '--single-process', // Critical for Render free tier memory limits
+        '--memory-pressure-off'
+      ],
+      protocolTimeout: 18000 // Match page timeout
     })
 
     const page = await browser.newPage()
-    page.setDefaultTimeout(20000)
+    // Reduced timeout for Render free tier (30s request limit)
+    page.setDefaultTimeout(18000)
 
     logger.info('[datewiseAttendance] Opening login page')
     await page.goto(LOGIN_URL, { waitUntil: 'networkidle2' })

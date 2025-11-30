@@ -183,26 +183,106 @@ function parseDatewiseAttendanceRows(html) {
       return
     }
     
-    // Extract text from each cell
+    // Extract text from each cell - properly clean HTML
     const cells = []
     tds.each((_, td) => {
-      cells.push(cleanText($(td).text()))
+      const $td = $(td)
+      // Get text content, removing all HTML tags and cleaning whitespace
+      let text = $td.text() || ''
+      // Remove HTML entities and clean up
+      text = text.replace(/&nbsp;/g, ' ')
+                 .replace(/&amp;/g, '&')
+                 .replace(/&lt;/g, '<')
+                 .replace(/&gt;/g, '>')
+                 .replace(/\s+/g, ' ')
+                 .trim()
+      cells.push(text)
     })
     
-    // Date-wise attendance typically has: Subject, Time From, Time To, Attendance Status
-    // But it might vary, so we'll be flexible
-    const subject = cells[0] || ''
-    const time_from = cells[1] || ''
-    const time_to = cells[2] || ''
-    const attendance = cells[3] || ''
+    // Date-wise attendance structure: Subject, Time From, Time To, Attendance Status
+    const subject = cleanText(cells[0] || '')
+    let time_from = cleanText(cells[1] || '')
+    let time_to = cleanText(cells[2] || '')
+    let attendance = cleanText(cells[3] || '')
     
-    // Skip empty rows
-    if (!subject && !time_from && !time_to && !attendance) {
-      logger.debug('[datewiseAttendance] Skipping empty row')
+    // If we have 4+ cells, use them
+    if (cells.length >= 4) {
+      time_from = cleanText(cells[1] || '')
+      time_to = cleanText(cells[2] || '')
+      attendance = cleanText(cells[3] || '')
+    } else if (cells.length === 3) {
+      // Only 3 cells - might be Subject, Time, Attendance
+      time_from = cleanText(cells[1] || '')
+      time_to = ''
+      attendance = cleanText(cells[2] || '')
+    }
+    
+    // Extract attendance status from the cell HTML if text is empty or contains HTML
+    if (!attendance || attendance.includes('<canvas') || attendance.includes('<') || attendance.length < 2) {
+      const attendanceCell = $(tds[3] || tds[2] || tds[tds.length - 1])
+      const attendanceHtml = attendanceCell.html() || ''
+      
+      // Look for attendance indicators in the HTML
+      if (attendanceHtml.includes('Present') || attendanceHtml.toLowerCase().includes('present')) {
+        attendance = 'Present'
+      } else if (attendanceHtml.includes('Absent') || attendanceHtml.toLowerCase().includes('absent')) {
+        attendance = 'Absent'
+      } else if (attendanceHtml.includes('canvas')) {
+        // Canvas might indicate a chart - check for data attributes or classes
+        const canvas = attendanceCell.find('canvas')
+        if (canvas.length) {
+          // Check parent or sibling elements for attendance status
+          const parent = canvas.parent()
+          const statusText = parent.text() || parent.attr('title') || parent.attr('data-status') || ''
+          if (statusText.toLowerCase().includes('present')) {
+            attendance = 'Present'
+          } else if (statusText.toLowerCase().includes('absent')) {
+            attendance = 'Absent'
+          } else {
+            // Default to checking percentage or other indicators
+            attendance = 'Present' // If canvas exists, usually means data is present
+          }
+        } else {
+          attendance = 'Unknown'
+        }
+      } else {
+        // Try to extract from text content
+        const cellText = attendanceCell.text() || ''
+        if (cellText.toLowerCase().includes('present') || cellText.includes('100%') || cellText.match(/\d+%/)) {
+          attendance = 'Present'
+        } else if (cellText.toLowerCase().includes('absent') || cellText.includes('0%')) {
+          attendance = 'Absent'
+    } else {
+          attendance = cellText || 'Unknown'
+        }
+      }
+    }
+    
+    // Clean up time_from and time_to - remove HTML artifacts
+    time_from = time_from.replace(/<\/?[^>]+(>|$)/g, '').trim()
+    time_to = time_to.replace(/<\/?[^>]+(>|$)/g, '').trim()
+    
+    // Extract time from "No of session Completed \n 1/1" format
+    if (time_to.includes('session') || time_to.includes('Completed')) {
+      const sessionMatch = time_to.match(/(\d+)\s*\/\s*(\d+)/)
+      if (sessionMatch) {
+        time_to = `${sessionMatch[1]}/${sessionMatch[2]}`
+      }
+    }
+    
+    // Skip empty rows (no subject)
+    if (!subject) {
+      logger.debug('[datewiseAttendance] Skipping row with no subject')
       return
     }
     
-    logger.debug('[datewiseAttendance] Parsed row', { subject, time_from, time_to, attendance })
+    logger.debug('[datewiseAttendance] Parsed row', { 
+      subject, 
+      time_from, 
+      time_to, 
+      attendance,
+      cellCount: cells.length
+    })
     
     rows.push({
       subject,

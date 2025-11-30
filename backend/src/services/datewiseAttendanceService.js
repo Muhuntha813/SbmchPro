@@ -296,11 +296,24 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
     }
   })
   
+  logger.info('[datewiseAttendance] Payload prepared', { 
+    payloadString: payload.toString(),
+    endpointCount: possibleEndpoints.length 
+  })
+  
   // Try each possible endpoint
   let lastError = null
+  let triedEndpoints = []
+  
   for (const endpoint of possibleEndpoints) {
+    triedEndpoints.push(endpoint)
     try {
-      logger.info('[datewiseAttendance] Trying API endpoint', { endpoint })
+      logger.info('[datewiseAttendance] Trying API endpoint', { 
+        endpoint,
+        payload: payload.toString(),
+        attempt: triedEndpoints.length,
+        total: possibleEndpoints.length
+      })
       
       const response = await client(endpoint, {
         method: 'POST',
@@ -311,6 +324,12 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
           Accept: 'application/json, text/javascript, */*; q=0.01'
         }),
         body: payload
+      })
+      
+      logger.info('[datewiseAttendance] Endpoint response received', {
+        endpoint,
+        status: response.status,
+        contentType: response.headers.get('content-type')
       })
       
       if (!response.ok) {
@@ -328,10 +347,13 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
       
       if (contentType.includes('application/json')) {
         const json = await response.json()
-        logger.debug('[datewiseAttendance] Received JSON response', { 
+        logger.info('[datewiseAttendance] Received JSON response', { 
           endpoint,
           hasResultPage: !!json.result_page,
-          status: json.status
+          hasHtml: !!json.html,
+          hasData: !!json.data,
+          status: json.status,
+          jsonKeys: Object.keys(json)
         })
         
         // Some APIs return HTML in a JSON field
@@ -356,28 +378,36 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
         }
       } else {
         resultHtml = await response.text()
+        logger.info('[datewiseAttendance] Received HTML response', {
+          endpoint,
+          htmlLength: resultHtml.length,
+          hasAttendanceResult: resultHtml.includes('attendance_result'),
+          hasTable: resultHtml.includes('<table')
+        })
       }
       
       // Parse HTML response
       const rows = parseDatewiseAttendanceRows(resultHtml)
       
       if (rows.length > 0) {
-        logger.info('[datewiseAttendance] Successfully fetched attendance', { 
+        logger.info('[datewiseAttendance] Successfully fetched attendance from endpoint', { 
           endpoint, 
           rowCount: rows.length 
         })
         return rows
       } else {
-        logger.warn('[datewiseAttendance] No rows found in response', { 
+        logger.warn('[datewiseAttendance] No rows found in endpoint response', { 
           endpoint,
           htmlLength: resultHtml.length,
-          hasAttendanceResult: resultHtml.includes('attendance_result')
+          hasAttendanceResult: resultHtml.includes('attendance_result'),
+          htmlPreview: resultHtml.substring(0, 1000)
         })
       }
     } catch (err) {
       logger.warn('[datewiseAttendance] Endpoint request failed', { 
         endpoint, 
-        error: err.message 
+        error: err.message,
+        stack: err.stack
       })
       lastError = err
       continue
@@ -385,10 +415,20 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
   }
   
   // If all API endpoints failed, try form submission as fallback
-  logger.info('[datewiseAttendance] All API endpoints failed, trying form submission')
+  logger.info('[datewiseAttendance] All API endpoints failed, trying form submission', {
+    triedEndpoints,
+    payload: payload.toString()
+  })
+  
   const form = $page('form').first()
   const formAction = form.attr('action') || ATT_PAGE
   const formUrl = new URL(formAction, ATT_PAGE).toString()
+  
+  logger.info('[datewiseAttendance] Submitting form', {
+    formUrl,
+    formAction,
+    payload: payload.toString()
+  })
   
   const submitResponse = await client(formUrl, {
     method: 'POST',
@@ -400,18 +440,39 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
     body: payload
   })
   
+  logger.info('[datewiseAttendance] Form submission response', {
+    status: submitResponse.status,
+    contentType: submitResponse.headers.get('content-type')
+  })
+  
   if (!submitResponse.ok) {
+    logger.error('[datewiseAttendance] Form submission failed', {
+      status: submitResponse.status,
+      lastError: lastError?.message
+    })
     throw lastError || new Error(`Date-wise attendance request failed (${submitResponse.status})`)
   }
   
   const resultHtml = await submitResponse.text()
+  logger.info('[datewiseAttendance] Form submission HTML received', {
+    htmlLength: resultHtml.length,
+    hasAttendanceResult: resultHtml.includes('attendance_result'),
+    hasTable: resultHtml.includes('<table'),
+    htmlPreview: resultHtml.substring(0, 1000)
+  })
+  
   const rows = parseDatewiseAttendanceRows(resultHtml)
   
   if (rows.length === 0) {
     logger.warn('[datewiseAttendance] No rows found after form submission', {
       htmlLength: resultHtml.length,
       hasAttendanceResult: resultHtml.includes('attendance_result'),
-      htmlPreview: resultHtml.substring(0, 500)
+      hasTable: resultHtml.includes('<table'),
+      htmlPreview: resultHtml.substring(0, 2000)
+    })
+  } else {
+    logger.info('[datewiseAttendance] Successfully parsed rows from form submission', {
+      rowCount: rows.length
     })
   }
   

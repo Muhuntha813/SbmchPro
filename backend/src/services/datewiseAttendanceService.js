@@ -207,8 +207,14 @@ function parseDatewiseAttendanceRows(html) {
     const $tr = $(tr)
     const tds = $tr.find('td')
     
-    // Skip header rows or rows with less than 3 cells
-    if (tds.length < 3) {
+    // Skip header rows - check if row is in thead or has th elements
+    if ($tr.closest('thead').length > 0 || $tr.find('th').length > 0) {
+      logger.debug('[datewiseAttendance] Skipping header row')
+      return
+    }
+    
+    // Skip rows with less than 2 cells (need at least subject and some data)
+    if (tds.length < 2) {
       logger.debug('[datewiseAttendance] Skipping row (too few cells)', { cellCount: tds.length })
       return
     }
@@ -229,62 +235,104 @@ function parseDatewiseAttendanceRows(html) {
       cells.push(text)
     })
     
-    // Date-wise attendance structure: Subject, Time From, Time To, Attendance Status
-    const subject = cleanText(cells[0] || '')
-    let time_from = cleanText(cells[1] || '')
-    let time_to = cleanText(cells[2] || '')
-    let attendance = cleanText(cells[3] || '')
+    // Date-wise attendance structure can vary:
+    // Common patterns:
+    // 1. Subject, Time From, Time To, Attendance Status (4 cells)
+    // 2. Subject, Time, Attendance Status (3 cells)
+    // 3. Subject, Attendance Status (2 cells)
+    // 4. Subject, Session Info, Attendance Status (3 cells)
     
-    // If we have 4+ cells, use them
+    const subject = cleanText(cells[0] || '')
+    let time_from = ''
+    let time_to = ''
+    let attendance = ''
+    
+    // Determine structure based on cell count and content
     if (cells.length >= 4) {
+      // 4+ cells: Subject, Time From, Time To, Attendance
       time_from = cleanText(cells[1] || '')
       time_to = cleanText(cells[2] || '')
       attendance = cleanText(cells[3] || '')
     } else if (cells.length === 3) {
-      // Only 3 cells - might be Subject, Time, Attendance
-      time_from = cleanText(cells[1] || '')
+      // 3 cells: Could be Subject, Time, Attendance OR Subject, Session, Attendance
+      const cell1 = cleanText(cells[1] || '')
+      const cell2 = cleanText(cells[2] || '')
+      
+      // Check if cell1 looks like a time range (contains ":" or "to" or "-")
+      if (cell1.match(/\d{1,2}:\d{2}/) || cell1.toLowerCase().includes('to') || cell1.includes('-')) {
+        // Split time range if it contains "to" or "-"
+        const timeMatch = cell1.match(/(\d{1,2}:\d{2})\s*(?:to|-|–)\s*(\d{1,2}:\d{2})/i)
+        if (timeMatch) {
+          time_from = timeMatch[1]
+          time_to = timeMatch[2]
+        } else {
+          time_from = cell1
+          time_to = cell1
+        }
+        attendance = cell2
+      } else if (cell1.match(/\d+\/\d+/)) {
+        // Session format like "1/1"
+        time_from = ''
+        time_to = cell1
+        attendance = cell2
+      } else {
+        // Assume cell1 is time_from, cell2 is attendance
+        time_from = cell1
+        time_to = ''
+        attendance = cell2
+      }
+    } else if (cells.length === 2) {
+      // 2 cells: Subject, Attendance
+      time_from = ''
       time_to = ''
-      attendance = cleanText(cells[2] || '')
+      attendance = cleanText(cells[1] || '')
     }
     
     // Extract attendance status from the cell HTML if text is empty or contains HTML
-    if (!attendance || attendance.includes('<canvas') || attendance.includes('<') || attendance.length < 2) {
-      const attendanceCell = $(tds[3] || tds[2] || tds[tds.length - 1])
+    // Use the last cell or the attendance cell (usually 3rd or 4th)
+    const attendanceCellIndex = cells.length >= 4 ? 3 : (cells.length >= 3 ? 2 : cells.length - 1)
+    const attendanceCell = $(tds[attendanceCellIndex] || tds[tds.length - 1])
+    
+    if (!attendance || attendance.length < 2 || attendance === 'Unknown') {
       const attendanceHtml = attendanceCell.html() || ''
+      const attendanceText = attendanceCell.text() || ''
       
-      // Look for attendance indicators in the HTML
-      if (attendanceHtml.includes('Present') || attendanceHtml.toLowerCase().includes('present')) {
+      // Look for attendance indicators in the HTML and text
+      const htmlLower = attendanceHtml.toLowerCase()
+      const textLower = attendanceText.toLowerCase()
+      
+      if (htmlLower.includes('present') || textLower.includes('present') || 
+          textLower.includes('p') || attendanceText.match(/^p$/i)) {
         attendance = 'Present'
-      } else if (attendanceHtml.includes('Absent') || attendanceHtml.toLowerCase().includes('absent')) {
+      } else if (htmlLower.includes('absent') || textLower.includes('absent') || 
+                 textLower.includes('a') || attendanceText.match(/^a$/i)) {
         attendance = 'Absent'
-      } else if (attendanceHtml.includes('canvas')) {
-        // Canvas might indicate a chart - check for data attributes or classes
+      } else if (htmlLower.includes('100%') || attendanceText.match(/100%/) || 
+                 attendanceText.match(/^\d+%$/) && parseInt(attendanceText) >= 75) {
+        attendance = 'Present'
+      } else if (htmlLower.includes('0%') || attendanceText.match(/0%/) || 
+                 (attendanceText.match(/^\d+%$/) && parseInt(attendanceText) < 50)) {
+        attendance = 'Absent'
+      } else if (attendanceHtml.includes('canvas') || attendanceHtml.includes('chart')) {
+        // Canvas/chart might indicate data visualization - try to extract status
         const canvas = attendanceCell.find('canvas')
         if (canvas.length) {
-          // Check parent or sibling elements for attendance status
           const parent = canvas.parent()
-          const statusText = parent.text() || parent.attr('title') || parent.attr('data-status') || ''
-          if (statusText.toLowerCase().includes('present')) {
+          const statusText = (parent.text() || parent.attr('title') || parent.attr('data-status') || '').toLowerCase()
+          if (statusText.includes('present')) {
             attendance = 'Present'
-          } else if (statusText.toLowerCase().includes('absent')) {
+          } else if (statusText.includes('absent')) {
             attendance = 'Absent'
           } else {
-            // Default to checking percentage or other indicators
-            attendance = 'Present' // If canvas exists, usually means data is present
+            // Default to Present if canvas exists (usually means attendance was recorded)
+            attendance = 'Present'
           }
         } else {
-          attendance = 'Unknown'
+          attendance = attendanceText || 'Unknown'
         }
       } else {
-        // Try to extract from text content
-        const cellText = attendanceCell.text() || ''
-        if (cellText.toLowerCase().includes('present') || cellText.includes('100%') || cellText.match(/\d+%/)) {
-          attendance = 'Present'
-        } else if (cellText.toLowerCase().includes('absent') || cellText.includes('0%')) {
-          attendance = 'Absent'
-    } else {
-          attendance = cellText || 'Unknown'
-        }
+        // Use the text content as-is, or default to Unknown
+        attendance = attendanceText.trim() || 'Unknown'
       }
     }
     
@@ -300,9 +348,13 @@ function parseDatewiseAttendanceRows(html) {
       }
     }
     
-    // Skip empty rows (no subject)
-    if (!subject) {
-      logger.debug('[datewiseAttendance] Skipping row with no subject')
+    // Skip empty rows (no subject or subject is just whitespace/special chars)
+    // Also skip rows where subject looks like a header (all caps, contains "Subject", etc.)
+    if (!subject || subject.length < 2 || 
+        subject.toUpperCase() === subject && subject.length > 10 || 
+        subject.toLowerCase().includes('subject') ||
+        subject.match(/^[#\-\s]+$/)) {
+      logger.debug('[datewiseAttendance] Skipping row with invalid subject', { subject })
       return
     }
     
@@ -441,13 +493,16 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
   // IMPORTANT: Regular attendance uses 'date' and 'end_date', so try that pattern first
   const payload = new URLSearchParams()
   
-  // First, try the same pattern as regular attendance (date, end_date)
+  // First, try the same pattern as regular attendance (date, end_date, subject)
   // Regular attendance API uses: date, end_date, subject
+  // For date-wise, we send empty subject to get all subjects for that date
   payload.set('date', dateToFetch)
   payload.set('end_date', dateToFetch)
-  logger.info('[datewiseAttendance] Using regular attendance pattern (date, end_date)', { 
+  payload.set('subject', '') // Empty = all subjects (matches regular attendance pattern)
+  logger.info('[datewiseAttendance] Using regular attendance pattern (date, end_date, subject)', { 
     date: dateToFetch,
-    end_date: dateToFetch 
+    end_date: dateToFetch,
+    subject: ''
   })
   
   // Also try to find actual input fields on the page
@@ -469,20 +524,39 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
     logger.warn('[datewiseAttendance] No date inputs found on page, using API pattern (date, end_date)')
   }
   
-  // Get any hidden form fields (CSRF tokens, etc.)
-  $page('input[type="hidden"]').each((_, el) => {
-    const name = $page(el).attr('name')
-    const value = $page(el).attr('value') || ''
-    if (name && !payload.has(name)) {
+  // Get ALL form fields including select, textarea, and all input types (not just hidden)
+  // This is critical - the form may require fields like clschg, class_id, etc.
+  $page('form').first().find('input, select, textarea').each((_, el) => {
+    const $el = $page(el)
+    const name = $el.attr('name')
+    if (!name) return
+    
+    const type = $el.attr('type') || ''
+    let value = ''
+    
+    if (type === 'checkbox' || type === 'radio') {
+      if ($el.is(':checked')) {
+        value = $el.attr('value') || 'on'
+      } else {
+        return // Skip unchecked checkboxes/radios
+      }
+    } else if ($el.is('select')) {
+      const selected = $el.find('option:selected').first()
+      value = selected.attr('value') || selected.text() || ''
+    } else {
+      value = $el.attr('value') || ''
+    }
+    
+    // Don't override date/subject fields we already set, but add all other fields
+    // This ensures we keep our date/subject values but still get required fields like clschg
+    if (!payload.has(name) || (name !== 'date' && name !== 'end_date' && name !== 'dob' && name !== 'end_dob' && name !== 'subject')) {
       payload.set(name, value)
-      logger.debug('[datewiseAttendance] Added hidden field', { name, value: value.substring(0, 50) })
+      logger.debug('[datewiseAttendance] Added form field', { name, value: value.substring(0, 50), type })
     }
   })
   
-  // IMPORTANT: Regular attendance API also sends 'subject' parameter (empty string = all subjects)
-  // For date-wise, we might need to send subject as empty or not send it at all
-  // But let's try without it first, then add it if needed
-  // payload.set('subject', '') // Uncomment if endpoints fail without it
+  // Note: We're already sending 'subject' parameter as empty string (set above)
+  // This matches the regular attendance API pattern and gets all subjects for the date
   
   logger.info('[datewiseAttendance] Payload prepared', { 
     payloadString: payload.toString(),
@@ -673,14 +747,36 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
     payload: payload.toString()
   })
   
-  const form = $page('form').first()
-  const formAction = form.attr('action') || ATT_PAGE
-  const formUrl = new URL(formAction, ATT_PAGE).toString()
+  // Find the correct form - look for forms that might handle date-wise attendance
+  // Sometimes there are multiple forms on the page
+  let form = $page('form').filter((_, f) => {
+    const $f = $page(f)
+    const action = $f.attr('action') || ''
+    // Prefer forms that don't go to getStudentClass (that's for class selection)
+    return !action.includes('getStudentClass')
+  }).first()
+  
+  // If no suitable form found, use the first form
+  if (form.length === 0) {
+    form = $page('form').first()
+  }
+  
+  let formAction = form.attr('action') || ATT_PAGE
+  
+  // If form action is relative or empty, make it absolute
+  if (formAction && !formAction.startsWith('http')) {
+    formAction = new URL(formAction, ATT_PAGE).toString()
+  } else if (!formAction || formAction === '') {
+    formAction = ATT_PAGE
+  }
+  
+  const formUrl = formAction
   
   logger.info('[datewiseAttendance] Submitting form', {
     formUrl,
-    formAction,
-    payload: payload.toString()
+    formAction: form.attr('action'),
+    payloadKeys: Array.from(payload.keys()),
+    payloadPreview: payload.toString().substring(0, 200)
   })
   
   const submitResponse = await client(formUrl, {

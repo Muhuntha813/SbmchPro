@@ -1,0 +1,19 @@
+{
+  "name": "Sbmch Pro",
+  "short_name": "Sbmch Pro",
+  "description": "Free SBMCH Attendance Tracker - Track your medical college attendance online",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

@@ -1,5 +1,9 @@
 # SBMCH Attendance Dashboard
 
+## Live Website
+https://sbmch-pro.vercel.app
+
+
 Simple attendance dashboard for SBMCH students (React + Vite frontend, Express backend).
 
 ## Features

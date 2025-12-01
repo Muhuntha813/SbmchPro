@@ -318,6 +318,7 @@ export default function AttendanceApp() {
   const [toDate, setToDate] = useState(() => formatToday())
   const [toast, setToast] = useState({ type: 'info', message: '' })
   const [showBackendModal, setShowBackendModal] = useState(false)
+  const [showComingSoonModal, setShowComingSoonModal] = useState(false)
   // Helper to get API base URL
   const getApiBaseUrl = () => {
     const reactApi = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : undefined
@@ -873,7 +874,7 @@ export default function AttendanceApp() {
   })
 
   // Bottom Navigation Bar Component
-  const BottomNavBar = React.memo(({ activeTab, setActiveTab, theme, isDarkTheme }) => {
+  const BottomNavBar = React.memo(({ activeTab, setActiveTab, theme, isDarkTheme, onComingSoonClick }) => {
     const getAccentColor = () => {
       if (theme === 'cool-down-buddy') return '#22d3ee' // cyan
       if (theme === 'midnight-drift') return '#8b5cf6' // purple
@@ -909,6 +910,16 @@ export default function AttendanceApp() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
         )
+      },
+      {
+        id: 'coming-soon',
+        label: 'Coming Soon',
+        icon: (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        ),
+        isSpecial: true
       }
     ]
     
@@ -927,22 +938,34 @@ export default function AttendanceApp() {
         <div className="max-w-6xl mx-auto px-2 sm:px-6">
           <div className="flex items-center justify-around sm:justify-center sm:gap-8 py-2 sm:py-3">
             {navItems.map((item) => {
-              const isActive = activeTab === item.id
+              const isActive = activeTab === item.id && !item.isSpecial
+              const isComingSoon = item.id === 'coming-soon'
+              
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => {
+                    if (isComingSoon && onComingSoonClick) {
+                      onComingSoonClick()
+                    } else if (!isComingSoon) {
+                      setActiveTab(item.id)
+                    }
+                  }}
                   className={classNames(
                     'flex flex-col items-center justify-center gap-1',
                     'px-4 sm:px-6 py-2 rounded-xl transition-all duration-200',
                     'min-w-[70px] sm:min-w-[100px]',
-                    isActive
+                    isComingSoon
                       ? isDarkTheme
-                        ? 'bg-white/10 text-white'
-                        : 'bg-slate-100 text-slate-900'
-                      : isDarkTheme
-                        ? 'text-white/60 hover:text-white/80 hover:bg-white/5'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                        ? 'text-white/70 hover:text-white/90 hover:bg-white/5'
+                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                      : isActive
+                        ? isDarkTheme
+                          ? 'bg-white/10 text-white'
+                          : 'bg-slate-100 text-slate-900'
+                        : isDarkTheme
+                          ? 'text-white/60 hover:text-white/80 hover:bg-white/5'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   )}
                   style={isActive ? {
                     color: isActive ? accentColor : undefined,
@@ -964,6 +987,11 @@ export default function AttendanceApp() {
                       <div 
                         className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 rounded-full"
                         style={{ backgroundColor: accentColor }}
+                      />
+                    )}
+                    {isComingSoon && (
+                      <div 
+                        className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-gradient-to-r from-cyan-400 to-indigo-500 animate-pulse"
                       />
                     )}
                   </div>
@@ -2819,6 +2847,7 @@ export default function AttendanceApp() {
           setActiveTab={setActiveTab} 
           theme={theme} 
           isDarkTheme={isDarkTheme}
+          onComingSoonClick={() => setShowComingSoonModal(true)}
         />
       )}
       
@@ -3106,6 +3135,153 @@ export default function AttendanceApp() {
               >
                 Cancel
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Coming Soon Modal */}
+      {showComingSoonModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowComingSoonModal(false)} />
+          <div className={classNames(
+            'relative w-full max-w-lg rounded-2xl p-6 shadow-xl max-h-[90vh] overflow-y-auto',
+            isDarkTheme
+              ? 'bg-white/10 border border-white/10 text-white backdrop-blur-xl'
+              : 'bg-white border border-slate-200 text-slate-900'
+          )}>
+            <button
+              type="button"
+              onClick={() => setShowComingSoonModal(false)}
+              className={classNames(
+                'absolute top-3 right-3 text-lg font-bold p-1 rounded-md transition-colors',
+                isDarkTheme ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+              )}
+              aria-label="Close"
+            >
+              ✕
+            </button>
+            <div className="mb-4">
+              <div className="flex items-center gap-2 mb-2">
+                <svg className="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <h3 className={classNames('text-2xl font-bold', isDarkTheme ? 'text-white' : 'text-slate-900')}>
+                  Coming Soon
+                </h3>
+              </div>
+              <p className={classNames('text-sm', isDarkTheme ? 'text-white/70' : 'text-slate-600')}>
+                Exciting new features are on the way! Here's what we're working on:
+              </p>
+            </div>
+            <div className="space-y-4">
+              <div className={classNames(
+                'rounded-xl p-4 border',
+                isDarkTheme
+                  ? 'bg-white/5 border-white/10'
+                  : 'bg-slate-50 border-slate-200'
+              )}>
+                <div className="flex items-start gap-3">
+                  <div className={classNames(
+                    'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center',
+                    isDarkTheme ? 'bg-cyan-500/20' : 'bg-cyan-100'
+                  )}>
+                    <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className={classNames('font-semibold mb-1', isDarkTheme ? 'text-white' : 'text-slate-900')}>
+                      Customizable Attendance Percentage
+                    </h4>
+                    <p className={classNames('text-sm', isDarkTheme ? 'text-white/70' : 'text-slate-600')}>
+                      Set your own attendance percentage threshold for each subject. No more one-size-fits-all requirements!
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className={classNames(
+                'rounded-xl p-4 border',
+                isDarkTheme
+                  ? 'bg-white/5 border-white/10'
+                  : 'bg-slate-50 border-slate-200'
+              )}>
+                <div className="flex items-start gap-3">
+                  <div className={classNames(
+                    'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center',
+                    isDarkTheme ? 'bg-purple-500/20' : 'bg-purple-100'
+                  )}>
+                    <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className={classNames('font-semibold mb-1', isDarkTheme ? 'text-white' : 'text-slate-900')}>
+                      Smart AI Suggestions
+                    </h4>
+                    <p className={classNames('text-sm', isDarkTheme ? 'text-white/70' : 'text-slate-600')}>
+                      Get intelligent recommendations when your attendance is low. AI will suggest the best days to take leave to maintain your target percentage.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className={classNames(
+                'rounded-xl p-4 border',
+                isDarkTheme
+                  ? 'bg-white/5 border-white/10'
+                  : 'bg-slate-50 border-slate-200'
+              )}>
+                <div className="flex items-start gap-3">
+                  <div className={classNames(
+                    'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center',
+                    isDarkTheme ? 'bg-indigo-500/20' : 'bg-indigo-100'
+                  )}>
+                    <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className={classNames('font-semibold mb-1', isDarkTheme ? 'text-white' : 'text-slate-900')}>
+                      UI Enhancements
+                    </h4>
+                    <p className={classNames('text-sm', isDarkTheme ? 'text-white/70' : 'text-slate-600')}>
+                      A more intuitive and user-friendly interface with improved navigation, better visualizations, and smoother interactions.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className={classNames(
+                'rounded-xl p-4 border',
+                isDarkTheme
+                  ? 'bg-white/5 border-white/10'
+                  : 'bg-slate-50 border-slate-200'
+              )}>
+                <div className="flex items-start gap-3">
+                  <div className={classNames(
+                    'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center',
+                    isDarkTheme ? 'bg-amber-500/20' : 'bg-amber-100'
+                  )}>
+                    <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className={classNames('font-semibold mb-1', isDarkTheme ? 'text-white' : 'text-slate-900')}>
+                      Day-wise Attendance View
+                    </h4>
+                    <p className={classNames('text-sm', isDarkTheme ? 'text-white/70' : 'text-slate-600')}>
+                      Get a detailed, user-friendly day-wise breakdown of your attendance. Easily track which days you attended and which you missed.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 pt-4 border-t border-white/10">
+              <p className={classNames('text-xs text-center', isDarkTheme ? 'text-white/60' : 'text-slate-500')}>
+                Stay tuned for updates! We're working hard to bring you these features soon.
+              </p>
             </div>
           </div>
         </div>

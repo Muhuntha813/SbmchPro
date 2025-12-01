@@ -1,4 +1,4 @@
-# SBMCH Attendance Dashboard
+# SBMCH Attendance Dashboard | Sbmch  Pro
 
 ## Live Website
 https://sbmch-pro.vercel.app

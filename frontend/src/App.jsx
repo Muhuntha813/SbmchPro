@@ -2384,393 +2384,14 @@ export default function AttendanceApp() {
       
       {activeTab === 'datewise' && (
         <div className="mb-20 sm:mb-6 pb-6 sm:pb-0">
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-white/90 mb-4 px-1">Date-wise Attendance</h3>
-            {/* Date Selector */}
-            <div className={classNames(
-              'rounded-xl p-4 sm:p-6 border',
-              isDarkTheme
-                ? 'bg-white/10 border-white/20'
-                : 'bg-white/20 border-white/30'
-            )}>
-              <label htmlFor="datewiseDate" className={classNames(
-                'block text-sm font-medium mb-3',
-                isDarkTheme ? 'text-white/80' : 'text-slate-700'
-              )}>
-                Select Date
-              </label>
-              
-              {/* Info message about password */}
-              {localStorage.getItem(PASS_KEY) ? (
-                <div className={classNames(
-                  'mb-3 p-2 rounded-lg text-xs',
-                  isDarkTheme
-                    ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-300'
-                    : 'bg-emerald-50 border border-emerald-200 text-emerald-700'
-                )}>
-                  <div className="flex items-start gap-2">
-                    <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <span>Password saved from login. You don't need to enter it again.</span>
-                  </div>
-                </div>
-              ) : (
-                <div className={classNames(
-                  'mb-3 p-2 rounded-lg text-xs',
-                  isDarkTheme
-                    ? 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-300'
-                    : 'bg-yellow-50 border border-yellow-200 text-yellow-700'
-                )}>
-                  <div className="flex items-start gap-2">
-                    <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                    <span>Password not saved. Enter your password below or login again with "Remember me" checked to save it.</span>
-                  </div>
-                </div>
-              )}
-              
-              <div className="space-y-3">
-                <div className="flex-1">
-                  <DatePickerInput
-                    id="datewiseDate"
-                    value={selectedDate}
-                    onChange={setSelectedDate}
-                    isDarkTheme={isDarkTheme}
-                    placeholder="Select date to view attendance"
-                  />
-                </div>
-                
-                {/* Password input - show if password not saved or user wants to enter manually */}
-                {(!localStorage.getItem(PASS_KEY) || showPasswordInput) && (
-                  <div className="relative">
-                    <label htmlFor="datewisePassword" className={classNames(
-                      'block text-sm font-medium mb-1',
-                      isDarkTheme ? 'text-white/80' : 'text-slate-700'
-                    )}>
-                      Password {localStorage.getItem(PASS_KEY) && '(optional - password is saved)'}
-                    </label>
-                    <input
-                      id="datewisePassword"
-                      type="password"
-                      value={datewisePassword}
-                      onChange={(e) => setDatewisePassword(e.target.value)}
-                      className={classNames(
-                        'w-full px-3 py-2 rounded-lg text-sm',
-                        'focus:outline-none focus:ring-2 focus:ring-[var(--accent-1)]',
-                        isDarkTheme
-                          ? 'bg-white/10 border border-white/20 text-white placeholder:text-white/40'
-                          : 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-500'
-                      )}
-                      placeholder="Enter your password"
-                    />
-                  </div>
-                )}
-                
-                <div className="flex flex-col sm:flex-row gap-3">
-                  {localStorage.getItem(PASS_KEY) && !showPasswordInput && (
-                    <button
-                      type="button"
-                      onClick={() => setShowPasswordInput(true)}
-                      className={classNames(
-                        'px-4 py-2 rounded-lg text-sm font-medium transition-all',
-                        'flex items-center gap-2',
-                        isDarkTheme
-                          ? 'bg-white/10 border border-white/20 text-white/80 hover:bg-white/15'
-                          : 'bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200'
-                      )}
-                    >
-                      Use Different Password
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      // Reset states
-                      setDatewiseLoading(true)
-                      setDatewiseError('')
-                      setDatewiseData(null)
-                      
-                      // Use entered password if provided, otherwise use stored password
-                      const storedPassword = localStorage.getItem(PASS_KEY) || ''
-                      const passwordToUse = datewisePassword || storedPassword
-                      
-                      if (!passwordToUse) {
-                        setDatewiseError('Password is required. Please enter your password or login again with "Remember me" checked.')
-                        setDatewiseLoading(false)
-                        return
-                      }
-                      
-                      if (!selectedDate) {
-                        setDatewiseError('Please select a date first.')
-                        setDatewiseLoading(false)
-                        return
-                      }
-                      
-                      const token = localStorage.getItem(TOKEN_KEY) || ''
-                      const viteApi = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env.VITE_API_URL : undefined
-                      const override = localStorage.getItem('API_OVERRIDE')
-                      const isDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-                      const apiBase = override || viteApi || (isDev ? 'http://localhost:3000' : null)
-                      
-                      if (!apiBase) {
-                        setError('Backend URL not configured. Please set VITE_API_URL or use "Set Backend" button.')
-                        return
-                      }
-                      
-                      // Create abort controller for timeout
-                      const controller = new AbortController()
-                      const timeoutId = setTimeout(() => controller.abort(), 120000) // 2 minute timeout
-                      
-                      // Retry logic - try up to 2 times (reduced from 3 to avoid long waits)
-                      const MAX_RETRIES = 2
-                      let lastError = null
-                      
-                      try {
-                        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-                          try {
-                            console.log(`[datewise] Attempt ${attempt}/${MAX_RETRIES} - Fetching attendance for ${selectedDate}`)
-                            
-                            const response = await fetch(`${apiBase}/api/attendance/datewise`, {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${token.trim()}`
-                              },
-                              body: JSON.stringify({
-                                date: selectedDate,
-                                password: passwordToUse
-                              }),
-                              signal: controller.signal
-                            })
-                            
-                            clearTimeout(timeoutId)
-                            
-                            if (!response.ok) {
-                              // If 404, it might be a route issue - wait and retry
-                              if (response.status === 404 && attempt < MAX_RETRIES) {
-                                console.warn(`[datewise] 404 error on attempt ${attempt}, retrying...`)
-                                await new Promise(resolve => setTimeout(resolve, 2000)) // 2 second wait
-                                continue
-                              }
-                              
-                              const errorData = await response.json().catch(() => ({}))
-                              throw new Error(errorData.error || errorData.message || `Request failed: ${response.status}`)
-                            }
-                            
-                            const data = await response.json()
-                            setDatewiseData(data)
-                            // Clear password input after successful fetch
-                            setDatewisePassword('')
-                            setShowPasswordInput(false)
-                            console.log('[datewise] Successfully fetched attendance', { rowCount: data.rows?.length || 0 })
-                            setDatewiseLoading(false)
-                            return // Success - exit retry loop
-                            
-                          } catch (err) {
-                            clearTimeout(timeoutId)
-                            
-                            // Check if it's an abort (timeout)
-                            if (err.name === 'AbortError') {
-                              lastError = new Error('Request timed out. The server may be taking too long to respond.')
-                              break
-                            }
-                            
-                            lastError = err
-                            console.error(`[datewise] Attempt ${attempt} failed:`, err.message)
-                            
-                            // If it's the last attempt or not a retryable error, break
-                            if (attempt === MAX_RETRIES || (err.message && !err.message.includes('404') && !err.message.includes('Not found'))) {
-                              break
-                            }
-                            
-                            // Wait before retrying (shorter wait)
-                            await new Promise(resolve => setTimeout(resolve, 2000))
-                          }
-                        }
-                      } catch (err) {
-                        clearTimeout(timeoutId)
-                        lastError = err
-                      } finally {
-                        clearTimeout(timeoutId)
-                      }
-                      
-                      // If we get here, all attempts failed
-                      setDatewiseError(
-                        lastError?.message || 
-                        'Failed to fetch date-wise attendance. Please check if the backend server is running and restart it if needed.'
-                      )
-                      console.error('[datewise] All fetch attempts failed', { error: lastError?.message })
-                      setDatewiseLoading(false)
-                    }}
-                    disabled={datewiseLoading || !selectedDate || (!localStorage.getItem(PASS_KEY) && !datewisePassword)}
-                    className={classNames(
-                      'px-6 py-2.5 rounded-lg text-sm font-medium transition-all',
-                      'flex items-center gap-2 whitespace-nowrap flex-1',
-                      datewiseLoading || !selectedDate || (!localStorage.getItem(PASS_KEY) && !datewisePassword)
-                        ? isDarkTheme
-                          ? 'bg-white/5 border border-white/10 text-white/40 cursor-not-allowed'
-                          : 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
-                        : isDarkTheme
-                          ? 'bg-[var(--accent-1)]/30 border-2 border-[var(--accent-1)]/50 text-[var(--accent-1)] hover:bg-[var(--accent-1)]/40'
-                          : 'bg-[var(--accent-1)]/40 border-2 border-[var(--accent-1)]/60 text-[var(--accent-1)] hover:bg-[var(--accent-1)]/50'
-                    )}
-                  >
-                    {datewiseLoading ? (
-                      <>
-                        <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                        Fetching...
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                        Fetch Attendance
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Error Message */}
-          {datewiseError && (
-            <div className={classNames(
-              'mb-6 rounded-lg border p-4',
-              isDarkTheme
-                ? 'bg-red-500/10 border-red-500/30 text-red-300'
-                : 'bg-red-50 border-red-200 text-red-700'
-            )}>
-              <div className="flex items-start gap-2">
-                <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-sm">{datewiseError}</p>
-              </div>
-            </div>
-          )}
-          
-          {/* Results Table */}
-          {datewiseData && (
-            <div className={classNames(
-              'rounded-xl border overflow-hidden',
-              isDarkTheme
-                ? 'bg-white/10 border-white/20'
-                : 'bg-white/20 border-white/30'
-            )}>
-              <div className={classNames(
-                'p-4 border-b',
-                isDarkTheme ? 'border-white/10' : 'border-slate-200'
-              )}>
-                <h4 className={classNames(
-                  'text-base font-semibold',
-                  isDarkTheme ? 'text-white/90' : 'text-slate-900'
-                )}>
-                  Attendance for {datewiseData.date_used}
-                </h4>
-                {datewiseData.rows && datewiseData.rows.length === 0 && (
-                  <p className={classNames(
-                    'text-sm mt-2',
-                    isDarkTheme ? 'text-white/60' : 'text-slate-600'
-                  )}>
-                    No attendance records found for this date.
-                  </p>
-                )}
-              </div>
-              
-              {datewiseData.rows && datewiseData.rows.length > 0 && (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className={classNames(
-                      isDarkTheme ? 'bg-white/5' : 'bg-slate-50'
-                    )}>
-                      <tr>
-                        <th className={classNames(
-                          'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider',
-                          isDarkTheme ? 'text-white/70' : 'text-slate-700'
-                        )}>
-                          Subject
-                        </th>
-                        <th className={classNames(
-                          'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider',
-                          isDarkTheme ? 'text-white/70' : 'text-slate-700'
-                        )}>
-                          Time From
-                        </th>
-                        <th className={classNames(
-                          'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider',
-                          isDarkTheme ? 'text-white/70' : 'text-slate-700'
-                        )}>
-                          Time To
-                        </th>
-                        <th className={classNames(
-                          'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider',
-                          isDarkTheme ? 'text-white/70' : 'text-slate-700'
-                        )}>
-                          Attendance
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className={classNames(
-                      isDarkTheme ? 'divide-white/10' : 'divide-slate-200'
-                    )}>
-                      {datewiseData.rows.map((row, idx) => (
-                        <tr
-                          key={idx}
-                          className={classNames(
-                            'transition-colors',
-                            isDarkTheme
-                              ? 'hover:bg-white/5'
-                              : 'hover:bg-slate-50'
-                          )}
-                        >
-                          <td className={classNames(
-                            'px-4 py-3 text-sm',
-                            isDarkTheme ? 'text-white/90' : 'text-slate-900'
-                          )}>
-                            {row.subject}
-                          </td>
-                          <td className={classNames(
-                            'px-4 py-3 text-sm',
-                            isDarkTheme ? 'text-white/80' : 'text-slate-700'
-                          )}>
-                            {row.time_from}
-                          </td>
-                          <td className={classNames(
-                            'px-4 py-3 text-sm',
-                            isDarkTheme ? 'text-white/80' : 'text-slate-700'
-                          )}>
-                            {row.time_to}
-                          </td>
-                          <td className={classNames(
-                            'px-4 py-3 text-sm font-medium',
-                            row.attendance === 'P' || row.attendance === 'Present'
-                              ? 'text-emerald-400'
-                              : row.attendance === 'A' || row.attendance === 'Absent'
-                              ? 'text-red-400'
-                              : isDarkTheme
-                              ? 'text-white/70'
-                              : 'text-slate-600'
-                          )}>
-                            {row.attendance || '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-          
-          {/* Empty State - Show when no data and no error */}
-          {!datewiseData && !datewiseError && !datewiseLoading && (
-            <div className="flex flex-col items-center justify-center py-12 sm:py-16">
+          {/* Coming Soon Message */}
+          <div className={classNames(
+            'rounded-xl p-8 sm:p-12 border',
+            isDarkTheme
+              ? 'bg-white/10 border-white/20'
+              : 'bg-white/20 border-white/30'
+          )}>
+            <div className="flex flex-col items-center justify-center text-center">
               <div className={classNames(
                 'rounded-full p-6 mb-6',
                 isDarkTheme 
@@ -2781,15 +2402,32 @@ export default function AttendanceApp() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
               </div>
-              <h4 className="text-xl font-bold text-white/90 mb-2">Attendance Details</h4>
-              <p className={classNames(
-                'text-center max-w-md',
-                isDarkTheme ? 'text-white/70' : 'text-slate-700'
+              <h3 className={classNames(
+                'text-2xl font-bold mb-3',
+                isDarkTheme ? 'text-white/90' : 'text-slate-900'
               )}>
-                Select a date above and click "Fetch Attendance" to view your attendance details for that specific date.
+                Date-wise Attendance
+              </h3>
+              <p className={classNames(
+                'text-base mb-6 max-w-md',
+                isDarkTheme ? 'text-white/70' : 'text-slate-600'
+              )}>
+                This feature is coming soon! We're working on bringing you the ability to view attendance for specific dates.
               </p>
+              <div className={classNames(
+                'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium',
+                isDarkTheme
+                  ? 'bg-[var(--accent-1)]/20 border border-[var(--accent-1)]/30 text-[var(--accent-1)]'
+                  : 'bg-[var(--accent-1)]/10 border border-[var(--accent-1)]/20 text-[var(--accent-1)]'
+              )}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Coming Soon
+              </div>
             </div>
-          )}
+          </div>
+          
         </div>
       )}
       {/* About & Support Buttons */}

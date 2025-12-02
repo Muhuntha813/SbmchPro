@@ -851,9 +851,9 @@ async function fetchDatewiseAttendance(client, { dateToFetch }) {
   return rows
 }
 
-// Simple in-memory cache for datewise attendance (5 minute TTL)
+// Simple in-memory cache for datewise attendance (10 minute TTL - increased for better performance)
 const cache = new Map()
-const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+const CACHE_TTL = 10 * 60 * 1000 // 10 minutes (increased from 5)
 
 /**
  * Get cache key for a request

@@ -25,7 +25,7 @@ export function getSharedPool() {
       ssl: DB_URL.includes('supabase') ? { rejectUnauthorized: false } : false,
       connectionTimeoutMillis: 10000,
       // Limit pool size to prevent connection exhaustion
-      max: 10, // Max 10 connections in pool (safe for free tier)
+      max: 15, // Increased from 10 to 15 (still safe for free tier, Supabase allows 200)
       idleTimeoutMillis: 30000, // Close idle connections after 30s
       allowExitOnIdle: true, // Allow process to exit when pool is idle
     })
@@ -40,7 +40,7 @@ export function getSharedPool() {
     })
 
     logger.info('[sharedDb] Database pool initialized', {
-      maxConnections: 10,
+      maxConnections: 15,
       hasDbUrl: !!DB_URL,
     })
   }
@@ -74,5 +74,10 @@ export async function closePool() {
     pool = null
   }
 }
+
+
+
+
+
 
 

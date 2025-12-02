@@ -18,6 +18,7 @@ import fetchCookie from 'fetch-cookie';
 import * as cheerio from 'cheerio';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
+import compression from 'compression';
 import { body, validationResult } from 'express-validator';
 import logger from './lib/logger.js';
 import authRouter from './routes/auth.js';
@@ -32,12 +33,22 @@ const app = express();
 // Security headers
 app.use(helmet());
 
+// Response compression - reduces bandwidth by 60-70%
+app.use(compression());
+
+// Request timeout handling (25 seconds - Render free tier limit is 30s)
+app.use((req, res, next) => {
+  req.setTimeout(25000);
+  res.setTimeout(25000);
+  next();
+});
+
 app.use(bodyParser.json());
 
-// Rate limiting - skip for localhost in development
+// Rate limiting - increased limits for better user experience
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'development' ? 1000 : 100, // Much higher limit in dev
+  max: process.env.NODE_ENV === 'development' ? 1000 : 200, // Increased from 100 to 200
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
   message: 'Too many requests from this IP, please try again later.',
@@ -58,6 +69,15 @@ const apiLimiter = rateLimit({
     }
     return false
   }
+});
+
+// Higher rate limit for authenticated endpoints (better UX for logged-in users)
+const authApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === 'development' ? 1000 : 300, // Higher limit for authenticated users
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests, please try again later.',
 });
 
 // --- CORS + Request Logging ---
@@ -162,6 +182,83 @@ if (SCRAPER_URL) {
 const lastLoginAt = {}; // username -> timestamp ms
 const scrapingStatus = {}; // username -> { running: boolean, promise: Promise }
 
+// Global scraping queue to prevent system overload
+const MAX_CONCURRENT_SCRAPES = 3; // Limit concurrent scrapes across all users
+let activeScrapes = 0;
+const scrapeQueue = [];
+
+/**
+ * Execute a scrape with global queue management
+ * Prevents too many concurrent scrapes from overwhelming the system
+ */
+async function executeScrape(username, scrapeFn) {
+  return new Promise((resolve, reject) => {
+    const runScrape = async () => {
+      activeScrapes++;
+      logger.info('[scrape] Starting scrape', { username, activeScrapes, queueLength: scrapeQueue.length });
+      try {
+        const result = await scrapeFn();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      } finally {
+        activeScrapes--;
+        logger.info('[scrape] Scrape completed', { username, activeScrapes, queueLength: scrapeQueue.length });
+        // Process next in queue
+        if (scrapeQueue.length > 0) {
+          const next = scrapeQueue.shift();
+          runScrape().then(next.resolve).catch(next.reject);
+        }
+      }
+    };
+    
+    if (activeScrapes < MAX_CONCURRENT_SCRAPES) {
+      runScrape();
+    } else {
+      logger.info('[scrape] Queueing scrape request', { username, activeScrapes, queueLength: scrapeQueue.length + 1 });
+      scrapeQueue.push({ resolve, reject, runScrape });
+    }
+  });
+}
+
+// In-memory cache for attendance data (2 minute TTL)
+const attendanceCache = new Map();
+const ATTENDANCE_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+/**
+ * Get cached attendance data for a user
+ */
+function getCachedAttendance(username) {
+  const cached = attendanceCache.get(username);
+  if (cached && Date.now() - cached.timestamp < ATTENDANCE_CACHE_TTL) {
+    logger.debug('[attendance] Cache hit', { username });
+    return cached.data;
+  }
+  if (cached) {
+    attendanceCache.delete(username);
+  }
+  return null;
+}
+
+/**
+ * Set cached attendance data for a user
+ */
+function setCachedAttendance(username, data) {
+  attendanceCache.set(username, {
+    data,
+    timestamp: Date.now()
+  });
+  // Clean up old entries periodically
+  if (attendanceCache.size > 500) {
+    const now = Date.now();
+    for (const [k, v] of attendanceCache.entries()) {
+      if (now - v.timestamp > ATTENDANCE_CACHE_TTL) {
+        attendanceCache.delete(k);
+      }
+    }
+  }
+}
+
 // ---- Database Connection ----
 // Use shared pool to prevent multiple pool instances
 const pool = getSharedPool();
@@ -246,6 +343,8 @@ async function ensureSchema() {
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_attendance_username ON attendance(username)`).catch(e => logger.warn('Index may already exist:', e.message));
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_attendance_recorded_at ON attendance(recorded_at DESC)`).catch(e => logger.warn('Index may already exist:', e.message));
+    // Optimized composite index for common query pattern
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_attendance_username_recorded_at ON attendance(username, recorded_at DESC)`).catch(e => logger.warn('Index may already exist:', e.message));
     
     await pool.query(`
       CREATE TABLE IF NOT EXISTS upcoming_classes (
@@ -270,6 +369,8 @@ async function ensureSchema() {
       );
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_latest_snapshot_attendance_id ON latest_snapshot(attendance_id)`).catch(e => logger.warn('Index may already exist:', e.message));
+    // Optimized composite index for common query pattern
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_latest_snapshot_username_fetched_at ON latest_snapshot(username, fetched_at DESC)`).catch(e => logger.warn('Index may already exist:', e.message));
     
     logger.info('DB schema ensured');
   } catch (err) {
@@ -679,12 +780,13 @@ app.post('/api/login', [
           
           logger.info('Using date range for scraping', { from: normalizedFrom, to: normalizedTo });
           
-          const result = await scrapeAttendance({
+          // Use global scraping queue to prevent system overload
+          const result = await executeScrape(username, () => scrapeAttendance({
             username,
             password,
             fromDate: normalizedFrom,
             toDate: normalizedTo
-          });
+          }));
 
           const processed = (result.attendanceRows || []).map(row => {
             const present = typeof row.present === 'number' ? row.present : (row.sessionsCompleted ?? 0);
@@ -795,6 +897,10 @@ app.post('/api/login', [
                 count: insertedCount,
                 expected: processed.length 
               });
+              
+              // Invalidate cache for this user to ensure fresh data
+              attendanceCache.delete(username);
+              logger.debug('[attendance] Cache invalidated after scrape', { username });
             } catch (err) {
               await client.query('ROLLBACK');
               logger.error('Transaction failed, rolled back', { 
@@ -963,12 +1069,19 @@ app.post('/api/login', [
   }
 });
 
-app.get('/api/attendance', requireAuth, async (req, res) => {
+app.get('/api/attendance', authApiLimiter, requireAuth, async (req, res) => {
   try {
     // User is already verified by requireAuth middleware
     const username = req.user.student_id;
 
     logger.info('[attendance] Checking attendance for user', { username });
+
+    // Check cache first
+    const cached = getCachedAttendance(username);
+    if (cached) {
+      logger.info('[attendance] Returning cached data', { username });
+      return res.json(cached);
+    }
 
     // Step 1: Check latest_snapshot first (fast lookup)
     const { rows: snapshotRows } = await pool.query(
@@ -1096,6 +1209,10 @@ app.get('/api/attendance', requireAuth, async (req, res) => {
       subjects: attendance.length, 
       classes: upcomingClasses.length 
     });
+    
+    // Cache the response before returning
+    setCachedAttendance(username, response);
+    
     return res.json(response);
   } catch (err) {
     logger.error('Attendance endpoint error', { error: err.message, stack: err.stack });
@@ -1119,7 +1236,7 @@ const asyncHandler = (fn) => {
 };
 
 // Date-wise attendance route - MUST be before error handler and 404 handler
-app.post('/api/attendance/datewise', requireAuth, asyncHandler(async (req, res) => {
+app.post('/api/attendance/datewise', authApiLimiter, requireAuth, asyncHandler(async (req, res) => {
   // Add early logging to verify route is hit
   logger.info('[datewise] Route handler invoked', { 
     method: req.method, 

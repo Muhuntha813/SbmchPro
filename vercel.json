@@ -6,6 +6,12 @@
   "redirects": [
     {
       "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "vercel.app"
+        }
+      ],
       "destination": "https://sbmchpro.in/$1",
       "permanent": true
     }

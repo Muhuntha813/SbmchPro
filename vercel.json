@@ -3,6 +3,13 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "installCommand": "npm ci",
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "destination": "https://sbmchpro.in/$1",
+      "permanent": true
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
